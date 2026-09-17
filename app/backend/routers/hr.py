@@ -10,8 +10,6 @@ from pydantic import BaseModel
 from datetime import date, datetime
 from core.database import get_db
 from core.security import get_current_user, require_roles
-
-require_hr_access = require_roles("ops_manager", "ceo")
 from services.document_service import dispatch_leave_approved
 
 router = APIRouter()
@@ -135,7 +133,7 @@ async def list_leave_requests(
     status_filter: Optional[str] = Query(None, alias="status"),
     user_id:       Optional[int] = Query(None),
     db    = Depends(get_db),
-    user  = Depends(require_hr_access),
+    user  = Depends(get_current_user),
 ):
     params = {}
     where  = []
@@ -177,7 +175,7 @@ async def list_leave_requests(
 async def submit_leave_request(
     body: LeaveRequestCreate,
     db   = Depends(get_db),
-    user = Depends(require_hr_access),
+    user = Depends(get_current_user),
 ):
     if body.end_date < body.start_date:
         raise HTTPException(400, "End date must be on or after start date.")
@@ -252,7 +250,7 @@ async def submit_leave_request(
 async def get_leave_request(
     request_id: int,
     db   = Depends(get_db),
-    user = Depends(require_hr_access),
+    user = Depends(get_current_user),
 ):
     result = await db.execute(text("""
         SELECT lr.*, u.full_name AS employee, rev.full_name AS reviewed_by_name
@@ -364,7 +362,7 @@ async def review_leave_request(
 async def cancel_leave_request(
     request_id: int,
     db   = Depends(get_db),
-    user = Depends(require_hr_access),
+    user = Depends(get_current_user),
 ):
     result = await db.execute(text(
         "SELECT user_id, leave_type, days_requested, start_date, status FROM leave_requests WHERE id = :id"
@@ -407,7 +405,7 @@ async def cancel_leave_request(
 async def get_balances(
     year: int = Query(2026),
     db   = Depends(get_db),
-    user = Depends(require_hr_access),
+    user = Depends(get_current_user),
 ):
     if user.role == "ops_manager":
         result = await db.execute(text("""
@@ -453,7 +451,7 @@ async def get_calendar_events(
     start: Optional[date] = Query(None),
     end:   Optional[date] = Query(None),
     db     = Depends(get_db),
-    user   = Depends(require_hr_access),
+    user   = Depends(get_current_user),
 ):
     # Team events: all can see
     # One-on-one: only participants + ops manager
@@ -506,7 +504,7 @@ async def get_calendar_events(
 async def create_event(
     body: EventCreate,
     db   = Depends(get_db),
-    user = Depends(require_hr_access),
+    user = Depends(get_current_user),
 ):
     if body.end_time <= body.start_time:
         raise HTTPException(400, "End time must be after start time.")
@@ -534,11 +532,12 @@ async def create_event(
     # Always add creator as participant
     participant_ids = list(set([user.id] + body.participant_ids))
     for pid in participant_ids:
+        response = "accepted" if pid == user.id else "pending"
         await db.execute(text("""
             INSERT INTO calendar_event_participants (event_id, user_id, response)
-            VALUES (:eid, :uid, CASE WHEN :uid = :creator THEN 'accepted' ELSE 'pending' END)
+            VALUES (:eid, :uid, :response)
             ON CONFLICT DO NOTHING
-        """), {"eid": event_id, "uid": pid, "creator": user.id})
+        """), {"eid": event_id, "uid": pid, "response": response})
 
     await db.commit()
     return {"id": event_id, "message": "Event created."}
@@ -548,7 +547,7 @@ async def create_event(
 async def delete_event(
     event_id: int,
     db        = Depends(get_db),
-    user      = Depends(require_hr_access),
+    user      = Depends(get_current_user),
 ):
     result = await db.execute(text(
         "SELECT created_by, related_leave_id FROM calendar_events WHERE id = :id"
@@ -571,7 +570,7 @@ async def delete_event(
 @router.get("/schedule/pw")
 async def get_pw_schedule(
     db   = Depends(get_db),
-    user = Depends(require_hr_access),
+    user = Depends(get_current_user),
 ):
     """Get Patricia's schedule overrides for the next 12 weeks."""
     result = await db.execute(text("""
@@ -591,7 +590,7 @@ async def get_pw_schedule(
 async def update_pw_schedule(
     body: ScheduleOverride,
     db   = Depends(get_db),
-    user = Depends(require_hr_access),
+    user = Depends(get_current_user),
 ):
     """Patricia or ops manager can override her day off for a given week."""
     pw_result = await db.execute(text(

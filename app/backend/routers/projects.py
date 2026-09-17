@@ -210,7 +210,7 @@ async def create_phase(
 async def deactivate_project(
     project_id: int,
     db   = Depends(get_db),
-    user = Depends(require_roles("ops_manager", "ceo")),
+    user = Depends(require_roles("ops_manager")),
 ):
     """
     Soft deactivate — hides project from active dropdowns.
@@ -237,7 +237,7 @@ async def deactivate_project(
 async def reactivate_project(
     project_id: int,
     db   = Depends(get_db),
-    user = Depends(require_roles("ops_manager", "ceo")),
+    user = Depends(require_roles("ops_manager")),
 ):
     """Reactivate a previously deactivated project."""
     result = await db.execute(text(

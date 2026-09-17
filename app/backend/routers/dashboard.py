@@ -31,5 +31,8 @@ async def dashboard_stats(
              WHERE resolved = FALSE
                AND missing_date = CURRENT_DATE - 1) AS missing_logs
     """))
-    row = result.mappings().one()
-    return dict(row)
+    row = dict(result.mappings().one())
+    # Missing-logs alert is ops_manager/ceo only per PERMISSIONS.md.
+    if current_user.role not in ("ops_manager", "ceo"):
+        row["missing_logs"] = None
+    return row
