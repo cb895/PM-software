@@ -156,8 +156,14 @@ async def adjust_stock(
     consumable_id: int,
     body: StockAdjust,
     db   = Depends(get_db),
-    user = Depends(get_current_user),
+    user = Depends(require_roles("ops_manager")),
 ):
+    """
+    Ops-manager-only manual override. Normal stock movement comes from
+    consumable usage logged on daily logs (decremented on submit — see
+    routers/daily_logs.py); this endpoint exists for corrections, physical
+    counts, and recording restocks that didn't go through a PO receipt.
+    """
     # Validate transaction type
     if body.transaction_type not in ('restock', 'usage', 'adjustment'):
         raise HTTPException(400, "Invalid transaction type.")

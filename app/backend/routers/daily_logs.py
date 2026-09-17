@@ -1,5 +1,5 @@
 """routers/daily_logs.py — Daily log endpoints"""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from services.document_service import dispatch_daily_log
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -121,6 +121,53 @@ async def add_log_entry(body: LogEntryIn, db = Depends(get_db), user = Depends(g
     })
     entry_id = result.scalar_one()
 
+    # Replace this entry's consumable-usage set with what was just submitted.
+    # A draft entry can be saved more than once before final submit, so this
+    # reconciles to "current state" rather than accumulating duplicates —
+    # delete any previously-posted budget entries for the old item set before
+    # the old items themselves are removed (budget_entries.reference_id isn't
+    # a real FK, so it won't cascade). Live stock is NOT touched here; it's
+    # only ever decremented once, at final submit (see submit_today_log).
+    existing_usage = await db.execute(text(
+        "SELECT id FROM consumable_daily_usage WHERE log_entry_id = :eid"
+    ), {"eid": entry_id})
+    existing_usage_id = existing_usage.scalar_one_or_none()
+    if existing_usage_id is not None:
+        await db.execute(text("""
+            DELETE FROM budget_entries
+            WHERE reference_type = 'consumable_daily_usage_item'
+              AND reference_id IN (
+                  SELECT id FROM consumable_daily_usage_items WHERE usage_id = :uid
+              )
+        """), {"uid": existing_usage_id})
+
+    if body.consumables:
+        usage_result = await db.execute(text("""
+            INSERT INTO consumable_daily_usage (log_entry_id, user_id, project_id)
+            VALUES (:eid, :user_id, :project_id)
+            ON CONFLICT (log_entry_id) DO UPDATE SET project_id = EXCLUDED.project_id
+            RETURNING id
+        """), {"eid": entry_id, "user_id": user.id, "project_id": body.project_id})
+        usage_id = usage_result.scalar_one()
+
+        await db.execute(text(
+            "DELETE FROM consumable_daily_usage_items WHERE usage_id = :uid"
+        ), {"uid": usage_id})
+
+        for item in body.consumables:
+            await db.execute(text("""
+                INSERT INTO consumable_daily_usage_items (usage_id, consumable_id, quantity_used, notes)
+                VALUES (:uid, :cid, :qty, :notes)
+            """), {
+                "uid": usage_id, "cid": item.consumable_id,
+                "qty": item.quantity_used, "notes": item.notes,
+            })
+    elif existing_usage_id is not None:
+        # No consumables on this save — clear out a previously-saved set.
+        await db.execute(text(
+            "DELETE FROM consumable_daily_usage WHERE id = :uid"
+        ), {"uid": existing_usage_id})  # cascades to consumable_daily_usage_items
+
     await db.commit()
     dispatch_daily_log(log_id)
     return {"log_id": log_id, "entry_id": entry_id}
@@ -148,10 +195,60 @@ async def submit_today_log(db = Depends(get_db), user = Depends(get_current_user
     """), {"uid": user.id})
     row = result.one_or_none()
     if not row:
-        from fastapi import HTTPException
         raise HTTPException(400, "No draft log found for today or already submitted.")
+    log_id = row[0]
+
+    # Live stock is decremented exactly once, here at final submit — not on
+    # every draft save — using whatever consumable usage is currently on
+    # file for this log's entries (see add_log_entry, which keeps that set
+    # reconciled to the latest draft state).
+    usage_result = await db.execute(text("""
+        SELECT cdui.id AS item_id, cdui.consumable_id, cdui.quantity_used,
+               cdu.project_id, c.name, c.current_stock, c.unit
+        FROM consumable_daily_usage cdu
+        JOIN consumable_daily_usage_items cdui ON cdui.usage_id = cdu.id
+        JOIN consumables c ON c.id = cdui.consumable_id
+        WHERE cdu.log_entry_id IN (
+            SELECT id FROM daily_log_entries WHERE log_id = :log_id
+        )
+    """), {"log_id": log_id})
+    usage_items = list(usage_result.mappings())
+
+    # Combine quantities per consumable (the same item can appear on more
+    # than one project entry in the same log) and check sufficiency up front
+    # so a shortfall on one item doesn't leave others partially applied.
+    totals = {}
+    for it in usage_items:
+        totals.setdefault(it["consumable_id"], {"name": it["name"], "unit": it["unit"],
+                                                  "current_stock": it["current_stock"], "needed": 0.0})
+        totals[it["consumable_id"]]["needed"] += float(it["quantity_used"])
+
+    shortfalls = [
+        f"{v['name']} (need {v['needed']}, have {v['current_stock']} {v['unit']})"
+        for v in totals.values() if v["needed"] > float(v["current_stock"])
+    ]
+    if shortfalls:
+        raise HTTPException(400, "Insufficient stock to submit this log: " + "; ".join(shortfalls))
+
+    for it in usage_items:
+        await db.execute(text("""
+            UPDATE consumables
+            SET current_stock = current_stock - :qty, updated_at = NOW()
+            WHERE id = :cid
+        """), {"qty": it["quantity_used"], "cid": it["consumable_id"]})
+
+        await db.execute(text("""
+            INSERT INTO consumable_transactions
+                (consumable_id, user_id, project_id, quantity_change, transaction_type, notes)
+            VALUES (:cid, :uid, :pid, :change, 'usage', :notes)
+        """), {
+            "cid": it["consumable_id"], "uid": user.id, "pid": it["project_id"],
+            "change": -float(it["quantity_used"]),
+            "notes": f"Logged via daily log #{log_id}",
+        })
+
     await db.commit()
-    return {"message": "Log submitted.", "log_id": row[0]}
+    return {"message": "Log submitted.", "log_id": log_id}
 
 @router.get("/{log_id}")
 async def get_log_detail(log_id: int, db = Depends(get_db), user = Depends(get_current_user)):

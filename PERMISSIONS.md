@@ -54,8 +54,15 @@ Last updated: September 3, 2026
 | View inventory | ✅ | ✅ | ✅ | ✅ |
 | Add new item | ✅ | ✅ | ✅ | ✅ |
 | Edit item details | ✅ | ✅ | ✅ | ✅ |
-| Adjust stock levels | ✅ | ✅ | ✅ | ✅ |
+| Manual stock override | — | — | — | ✅ |
 | View transaction history | ✅ | ✅ | ✅ | ✅ |
+
+Live stock is not adjusted by hand in the normal flow — it's decremented
+automatically when a daily log is submitted (see Daily Logs below), based
+on the consumables recorded against each project entry that day. The
+ops_manager-only "Manual stock override" (`POST /consumables/{id}/adjust`)
+exists for corrections, physical counts, and restocks that didn't come
+through a PO receipt.
 
 ### Daily Logs
 | Action | lab_tech | qm_director | ceo | ops_manager |
@@ -63,6 +70,14 @@ Last updated: September 3, 2026
 | Submit own log | ✅ | ✅ | ✅ | ✅ |
 | View all logs | ✅ | ✅ | ✅ | ✅ |
 | See missing log alerts | — | — | — | ✅ |
+
+Submitting a log is what moves live inventory: any consumables recorded
+against a project entry are decremented from `consumables.current_stock`
+when the log is submitted (`POST /daily-logs/today/submit`), and a
+matching `consumable_transactions` row is recorded. Draft saves
+(`POST /daily-logs/today/entries`) do not touch stock — only submit does,
+and only once per log. Submitting is blocked if the log's consumables
+would take any item's stock negative.
 
 ### Tasks & Gantt Chart
 | Action | lab_tech | qm_director | ceo | ops_manager |

@@ -2,28 +2,34 @@
 services/document_service.py
 Orchestrates PDF generation + email dispatch for all document triggers.
 Each dispatch creates its own DB session — never passes the request session
-to a background thread (async sessions are not thread-safe).
+into the background task (a session mid-transaction isn't safe to share).
 """
 import asyncio
 import logging
-import threading
 
 log = logging.getLogger(__name__)
 
+# Keep strong references to fire-and-forget tasks so they aren't garbage
+# collected mid-flight (asyncio only holds a weak reference otherwise).
+_background_tasks: set = set()
+
 
 def _run_async(coro):
-    """Run an async coroutine in a daemon background thread with its own event loop."""
-    def run():
-        asyncio.run(coro)
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
+    """
+    Schedule a fire-and-forget coroutine on the *current* running event loop.
 
-
-async def _get_db():
-    """Create a fresh async DB session for background use."""
-    from core.database import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        return session
+    This used to spin up a separate OS thread and call asyncio.run() there,
+    which created a second event loop. But the DB session inside these
+    coroutines comes from the app's single module-level asyncpg engine/pool
+    (core.database.AsyncSessionLocal), and asyncpg connections are bound to
+    the event loop that created them — reusing one from a different loop
+    doesn't just fail this call, it corrupts that pooled connection so the
+    *next* unrelated request that happens to check it out can silently lose
+    writes. Running as a task on the same loop avoids that entirely.
+    """
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 # ============================================================

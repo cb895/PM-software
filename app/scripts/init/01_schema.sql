@@ -1102,8 +1102,10 @@ DECLARE
     v_phase_id   INTEGER;
     v_project_id INTEGER;
 BEGIN
+    -- consumable_daily_usage_items has no log_entry_id column directly;
+    -- the project comes from its parent consumable_daily_usage row.
     SELECT project_id INTO v_project_id
-    FROM daily_log_entries WHERE id = NEW.log_entry_id;
+    FROM consumable_daily_usage WHERE id = NEW.usage_id;
 
     SELECT unit_cost INTO v_unit_cost FROM consumables WHERE id = NEW.consumable_id;
     v_amount := NEW.quantity_used * COALESCE(v_unit_cost, 0);
