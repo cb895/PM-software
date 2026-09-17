@@ -173,7 +173,7 @@ function KpiMain() {
         <Card>
           <EmptyState
             title="No KPI data yet"
-            description='Click "Compute KPIs" to calculate this period\'s results.'
+            description={`Click "Compute KPIs" to calculate this period's results.`}
             action={<Button variant="primary" onClick={() => setShowCompute(true)}>Compute KPIs</Button>}
           />
         </Card>
@@ -207,7 +207,6 @@ function KpiMain() {
                         <Radar name={emp} dataKey="value" stroke={COLORS[i % COLORS.length]}
                           fill={COLORS[i % COLORS.length]} fillOpacity={0.15}
                           strokeWidth={1.5} />
-                        <ReferenceLine y={100} stroke="var(--border)" strokeDasharray="3 3" />
                       </RadarChart>
                     </ResponsiveContainer>
                     <p className="radar-note">100 = target. Values above 100 exceed target.</p>

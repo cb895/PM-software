@@ -25,11 +25,11 @@ WHERE code = 'CORT-P1';
 INSERT INTO project_phases (project_id, phase_name, phase_number, budget_allocated, start_date, end_date, budget_alert_threshold, is_active)
 SELECT
     p.id,
-    phase_name,
-    phase_number,
+    phases.phase_name,
+    phases.phase_number,
     0.00,           -- set allocated budget per phase — update after ops manager review
-    start_date::DATE,
-    end_date::DATE,
+    phases.start_date::DATE,
+    phases.end_date::DATE,
     80.00,
     TRUE
 FROM projects p,

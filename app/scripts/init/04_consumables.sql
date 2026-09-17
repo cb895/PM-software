@@ -100,8 +100,8 @@ CREATE TRIGGER trg_consumable_auto_reorder
 
 -- Category descriptions view for frontend dropdowns
 CREATE VIEW consumable_category_list AS
-SELECT unnest(enum_range(NULL::consumable_category)) AS category,
-       CASE unnest(enum_range(NULL::consumable_category))
+SELECT category,
+       CASE category
            WHEN 'reagent'     THEN 'Reagents — assay chemicals and solutions'
            WHEN 'antibody'    THEN 'Antibodies — detection and capture antibodies'
            WHEN 'buffer'      THEN 'Buffers — running buffers and diluents'
@@ -112,7 +112,8 @@ SELECT unnest(enum_range(NULL::consumable_category)) AS category,
            WHEN 'packaging'   THEN 'Packaging — pouches, desiccants, labels'
            WHEN 'equipment'   THEN 'Equipment — hardware and instruments'
            WHEN 'general'     THEN 'General — office and general lab supplies'
-       END AS description;
+       END AS description
+FROM unnest(enum_range(NULL::consumable_category)) AS category;
 
 -- =============================================================
 -- SAMPLE CONSUMABLES

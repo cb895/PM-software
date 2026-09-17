@@ -203,7 +203,7 @@ CREATE TABLE po_line_items (
     unit                consumable_unit NOT NULL DEFAULT 'each',
     unit_cost_estimate  NUMERIC(10,2),
     unit_cost_actual    NUMERIC(10,2),                      -- confirmed on receipt / invoice
-    consumable_id       INTEGER         REFERENCES consumables(id), -- linked if restocking inventory
+    consumable_id       INTEGER,                                  -- linked if restocking inventory; FK added below once consumables exists
     notes               TEXT
 );
 
@@ -290,6 +290,10 @@ CREATE TABLE consumables (
     updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE po_line_items
+    ADD CONSTRAINT fk_po_line_items_consumable
+    FOREIGN KEY (consumable_id) REFERENCES consumables(id);
+
 CREATE TABLE consumable_transactions (
     id                  SERIAL PRIMARY KEY,
     consumable_id       INTEGER         NOT NULL REFERENCES consumables(id),
@@ -342,7 +346,7 @@ CREATE TABLE daily_log_entries (
 CREATE TABLE daily_log_entry_tasks (
     id                  SERIAL PRIMARY KEY,
     log_entry_id        INTEGER         NOT NULL REFERENCES daily_log_entries(id) ON DELETE CASCADE,
-    task_id             INTEGER         NOT NULL REFERENCES tasks(id),
+    task_id             INTEGER         NOT NULL,                  -- FK added below once tasks exists
     notes               TEXT,                                      -- per-task progress note
     status_update       task_status,                               -- NULL = no change, set to update
     UNIQUE (log_entry_id, task_id)
@@ -409,6 +413,10 @@ CREATE TABLE tasks (
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE daily_log_entry_tasks
+    ADD CONSTRAINT fk_daily_log_entry_tasks_task
+    FOREIGN KEY (task_id) REFERENCES tasks(id);
 
 CREATE TABLE task_history (
     id                  SERIAL PRIMARY KEY,
@@ -669,7 +677,9 @@ CREATE INDEX idx_daily_log_date          ON daily_logs(log_date);
 CREATE INDEX idx_daily_log_entry_log     ON daily_log_entries(log_id);
 CREATE INDEX idx_daily_log_entry_project ON daily_log_entries(project_id);
 CREATE INDEX idx_tasks_project           ON tasks(project_id);
-CREATE INDEX idx_tasks_assigned          ON tasks(assigned_to);
+-- idx_tasks_assigned dropped: tasks.assigned_to was removed in favor of the
+-- task_assignees junction table (created in 02_cortisol_tasks.sql, which
+-- also creates idx_task_assignees_task / idx_task_assignees_user).
 CREATE INDEX idx_tasks_status            ON tasks(status);
 CREATE INDEX idx_tasks_dates             ON tasks(planned_start, planned_end);
 -- CREATE INDEX idx_budget_project          ON budget_entries(project_id); (defined inline above)

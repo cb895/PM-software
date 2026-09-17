@@ -359,7 +359,6 @@ function ProjectEntry({ entry, idx, projects, consumables, onUpdate, onRemove, o
             onClick={() => setShowNewConsumable(v => !v)}>
             {showNewConsumable ? 'Cancel' : '+ New item to inventory'}
           </Button>
-        </div>
 
         {showNewConsumable && (
           <div style={{
@@ -385,6 +384,7 @@ function ProjectEntry({ entry, idx, projects, consumables, onUpdate, onRemove, o
             />
           </div>
         )}
+        </div>
       )}
     </Card>
   );

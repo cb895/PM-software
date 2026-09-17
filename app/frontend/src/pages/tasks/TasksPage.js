@@ -80,9 +80,11 @@ function TasksMain() {
               <button className={`view-pill ${view === 'list'  ? 'view-pill--active' : ''}`} onClick={() => setView('list')}>List</button>
               <button className={`view-pill ${view === 'gantt' ? 'view-pill--active' : ''}`} onClick={() => setView('gantt')}>Gantt</button>
             </div>
-            {hasRole('ops_manager') && (
-              <Button variant="secondary" onClick={() => setShowTemplates(v => !v)}>Templates</Button>
-            <Button variant="primary" onClick={() => setShowCreate(true)}>+ New task</Button>
+            {hasRole('ops_manager', 'ceo') && (
+              <>
+                <Button variant="secondary" onClick={() => setShowTemplates(v => !v)}>Templates</Button>
+                <Button variant="primary" onClick={() => setShowCreate(true)}>+ New task</Button>
+              </>
             )}
           </div>
         }

@@ -200,8 +200,6 @@ function ConsumablesList() {
       )}
 
       {hasRole('ops_manager') && (
-      )}
-
         <CreateConsumableModal
           open={showCreate}
           onClose={() => setShowCreate(false)}
@@ -716,9 +714,9 @@ function EditConsumableModal({ open, consumable, onClose, onSuccess }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.delete(\`/consumables/\${consumable.id}\`),
+    mutationFn: () => api.delete(`/consumables/${consumable.id}`),
     onSuccess: () => {
-      toast.success(\`\${consumable.name} removed from inventory.\`);
+      toast.success(`${consumable.name} removed from inventory.`);
       onSuccess();
     },
     onError: err => toast.error(err.response?.data?.detail || 'Failed to delete.'),

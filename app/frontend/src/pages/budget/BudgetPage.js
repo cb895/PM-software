@@ -430,7 +430,6 @@ function BudgetOverview() {
               </Table>
             </Card>
           )}
-        </div>
 
           {/* Overhead PO payments */}
           {overheadEntries?.length > 0 && (
