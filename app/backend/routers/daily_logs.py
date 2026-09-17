@@ -168,6 +168,36 @@ async def add_log_entry(body: LogEntryIn, db = Depends(get_db), user = Depends(g
             "DELETE FROM consumable_daily_usage WHERE id = :uid"
         ), {"uid": existing_usage_id})  # cascades to consumable_daily_usage_items
 
+    # Replace this entry's linked-task set the same way — reconciled to the
+    # latest draft, not accumulated. Applying a status_update to the actual
+    # task (and recording task_history) happens once at final submit, same
+    # reasoning as stock: repeated draft saves shouldn't flip a task's real
+    # status back and forth or write a history entry per keystroke.
+    await db.execute(text(
+        "DELETE FROM daily_log_entry_tasks WHERE log_entry_id = :eid"
+    ), {"eid": entry_id})
+
+    for t in (body.task_updates or []):
+        task_id = t.get("task_id")
+        if not task_id:
+            continue
+        owner = await db.execute(text(
+            "SELECT project_id FROM tasks WHERE id = :tid"
+        ), {"tid": task_id})
+        row = owner.one_or_none()
+        if not row:
+            raise HTTPException(404, f"Task {task_id} not found.")
+        if row[0] != body.project_id:
+            raise HTTPException(400, f"Task {task_id} does not belong to this entry's project.")
+
+        await db.execute(text("""
+            INSERT INTO daily_log_entry_tasks (log_entry_id, task_id, notes, status_update)
+            VALUES (:eid, :tid, :notes, :status_update)
+        """), {
+            "eid": entry_id, "tid": task_id,
+            "notes": t.get("notes"), "status_update": t.get("status_update"),
+        })
+
     await db.commit()
     dispatch_daily_log(log_id)
     return {"log_id": log_id, "entry_id": entry_id}
@@ -246,6 +276,16 @@ async def submit_today_log(db = Depends(get_db), user = Depends(get_current_user
             "change": -float(it["quantity_used"]),
             "notes": f"Logged via daily log #{log_id}",
         })
+
+    # Note: task status_update is NOT applied here. A DB trigger
+    # (trg_log_entry_task_status / fn_log_entry_task_status_update in
+    # 01_schema.sql) already applies it — and writes task_history —
+    # the moment a daily_log_entry_tasks row is inserted in add_log_entry,
+    # i.e. as soon as the draft is saved, not deferred to submit. That's
+    # a deliberate difference from stock: a task's status is just its
+    # current value, so re-applying the same status on a re-save is
+    # harmless (if a little noisy in task_history), unlike stock where
+    # re-decrementing on every draft edit would double-count usage.
 
     await db.commit()
     return {"message": "Log submitted.", "log_id": log_id}
