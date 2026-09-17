@@ -131,6 +131,12 @@ CREATE TRIGGER trg_assign_po_number
     BEFORE UPDATE ON purchase_orders
     FOR EACH ROW EXECUTE FUNCTION fn_assign_po_number();
 
+-- Requester-set urgency, separate from approver-set priority — required by
+-- POST /purchase-orders (routers/purchase_orders.py) and the PO create form.
+-- Missing from the original schema on deployments created before this patch.
+ALTER TABLE purchase_orders
+    ADD COLUMN IF NOT EXISTS urgency VARCHAR(20) NOT NULL DEFAULT 'normal';
+
 -- Add auto-reorder to cron (call fn_auto_reorder_pos daily)
 -- Already handled by labpm_cron container — add to crontab:
 -- 0 10 * * 1-5   psql -U labpm_user -d labpm -c "SELECT fn_auto_reorder_pos();"

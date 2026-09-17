@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import date
 from core.database import get_db
 from core.security import require_roles, require_kpi_access, require_kpi_manager
@@ -21,7 +21,7 @@ class KpiTargetCreate(BaseModel):
     period:         str = 'weekly'
     user_id:        Optional[int]  = None
     project_id:     Optional[int]  = None
-    effective_from: date = date.today()
+    effective_from: date = Field(default_factory=date.today)
     effective_to:   Optional[date] = None
     is_system:      bool = False
 

@@ -11,7 +11,7 @@ from datetime import date, datetime
 from core.database import get_db
 from core.security import get_current_user, require_roles
 
-require_hr_access = require_roles("ops_manager", "ceo"), require_roles
+require_hr_access = require_roles("ops_manager", "ceo")
 from services.document_service import dispatch_leave_approved
 
 router = APIRouter()

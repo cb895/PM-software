@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Optional
 from pydantic import BaseModel
+from datetime import date
 from core.database import get_db
 from core.security import require_roles, require_budget_access
 

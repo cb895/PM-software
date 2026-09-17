@@ -546,7 +546,7 @@ function CreateTaskModal({ open, projects, onClose, onSuccess }) {
 
   const { data: users } = useQuery({
     queryKey: ['users-list'],
-    queryFn: () => api.get('/users').then(r => r.data),
+    queryFn: () => api.get('/tasks/users').then(r => r.data),
     enabled: open,
   });
 

@@ -179,6 +179,7 @@ CREATE TABLE purchase_orders (
     status              po_status       NOT NULL DEFAULT 'pending',
     priority            priority_level  NOT NULL DEFAULT 'normal',
     risk_level          risk_level,                         -- Low / Medium / High / Critical
+    urgency             VARCHAR(20)     NOT NULL DEFAULT 'normal', -- requester's urgency, separate from approver-set priority
     notes               TEXT,
     rejection_reason    TEXT,
     expected_delivery   DATE,
