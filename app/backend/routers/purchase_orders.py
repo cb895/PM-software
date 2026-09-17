@@ -205,10 +205,6 @@ async def get_purchase_order(
     if not po:
         raise HTTPException(404, "Purchase order not found.")
 
-    # Lab techs can only see their own
-    if user.role == "lab_tech" and po["requested_by"] != user.full_name:
-        raise HTTPException(403, "Access denied.")
-
     # Fetch line items
     items_result = await db.execute(text("""
         SELECT id, description, product_id, product_url,

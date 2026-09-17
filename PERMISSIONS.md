@@ -126,8 +126,8 @@ require_credentials_access = require_roles("ops_manager", "ceo", "qm_director")
 require_task_editor        = require_roles("ops_manager", "ceo")
 require_budget_access      = require_roles("ops_manager", "ceo")
 require_kpi_access         = require_roles("ops_manager", "ceo")
-require_kpi_manager        = require_roles("ops_manager")
-require_report_manager     = require_roles("ops_manager")
+require_kpi_manager        = require_roles("ops_manager", "ceo")
+require_report_manager     = require_roles("ops_manager", "ceo")
 ```
 
 ### Frontend — role checks use `hasRole()` from `AuthContext`
@@ -143,12 +143,6 @@ hasRole('ops_manager')                         // Report generate/publish, KPI m
 ### Sidebar nav visibility (AppLayout.js)
 - Budget and KPI tabs only visible to `ops_manager` and `ceo`
 - All other tabs visible to all roles
-
-### Lab tech PO visibility
-Lab techs only see their own POs in the list view. This is enforced server-side:
-```sql
-WHERE po.requested_by = :user_id  -- added when role = 'lab_tech'
-```
 
 ---
 
