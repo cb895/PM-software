@@ -1,0 +1,10 @@
+# MetabolicTrack Lab PM — Scheduled Jobs
+# Each entry sources /app/cron_env.sh first — cron does not otherwise see the
+# container's DATABASE_URL / SECRET_KEY / FERNET_KEY env vars (see entrypoint.sh).
+0 10 * * 1-5 . /app/cron_env.sh && cd /app && python -m jobs.missing_logs >> /var/log/labpm_cron.log 2>&1
+30 6 * * 1   . /app/cron_env.sh && cd /app && python -m jobs.compute_kpis weekly >> /var/log/labpm_cron.log 2>&1
+30 6 1 * *   . /app/cron_env.sh && cd /app && python -m jobs.compute_kpis monthly >> /var/log/labpm_cron.log 2>&1
+0  6 * * 1   . /app/cron_env.sh && cd /app && python -m jobs.weekly_report >> /var/log/labpm_cron.log 2>&1
+
+# Auto-generate reorder POs for low-stock consumables (weekdays 10am)
+0 10 * * 1-5   . /app/cron_env.sh && psql "$DATABASE_URL" -c "SELECT fn_auto_reorder_pos();" >> /var/log/labpm_cron.log 2>&1

@@ -1,0 +1,106 @@
+/* ============================================================
+   Login Page
+   Full-screen dark with ambient phosphor trace lines
+   ============================================================ */
+
+.login-page {
+  min-height: 100vh;
+  background: var(--bg-base);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 2.5rem 2rem;
+  position: relative;
+  z-index: 10;
+}
+
+.login-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 2rem;
+}
+
+.login-logo-mark {
+  width: 36px;
+  height: 36px;
+  background: var(--accent);
+  color: var(--bg-base);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.login-logo-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.login-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.375rem;
+}
+
+.login-subtitle {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  margin-bottom: 2rem;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Ambient trace lines — signature background element */
+.login-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.trace {
+  position: absolute;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--accent) 30%,
+    var(--accent) 70%,
+    transparent 100%
+  );
+  opacity: 0.12;
+  animation: trace-pulse 4s ease-in-out infinite;
+}
+
+.trace-1 { left: 20%;  height: 60%; top: 20%; animation-delay: 0s; }
+.trace-2 { left: 50%;  height: 40%; top: 30%; animation-delay: 1.5s; opacity: 0.07; }
+.trace-3 { right: 20%; height: 50%; top: 25%; animation-delay: 0.8s; opacity: 0.09; }
+
+@keyframes trace-pulse {
+  0%, 100% { opacity: 0.04; transform: scaleY(0.8); }
+  50%       { opacity: 0.14; transform: scaleY(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trace { animation: none; }
+}

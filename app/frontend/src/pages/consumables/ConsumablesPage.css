@@ -1,0 +1,200 @@
+/* ============================================================
+   Consumables Page
+   ============================================================ */
+
+.consumable-filters { margin-bottom: 1.25rem; }
+.filter-search { max-width: 280px; }
+
+.low-stock-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* Restock alert banner */
+.restock-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--warning);
+}
+
+.restock-banner-icon { font-size: 1rem; flex-shrink: 0; }
+.restock-banner span { flex: 1; }
+
+/* Table rows */
+.row-warning td { background: var(--warning-bg) !important; }
+
+.consumable-name-cell { display: flex; align-items: center; gap: 0.5rem; }
+.consumable-name      { font-size: 0.9375rem; font-weight: 500; color: var(--text-primary); }
+
+.sku-code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.stock-ok   { font-family: var(--font-mono); font-weight: 600; color: var(--success); }
+.stock-low  { font-family: var(--font-mono); font-weight: 600; color: var(--warning); }
+.stock-zero { font-family: var(--font-mono); font-weight: 600; color: var(--danger); }
+
+.change-positive { font-family: var(--font-mono); color: var(--success); font-weight: 500; }
+.change-negative { font-family: var(--font-mono); color: var(--danger);  font-weight: 500; }
+
+/* Detail layout */
+.consumable-detail-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* Stock card */
+.stock-card {}
+
+.stock-display {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 1rem 0 0.75rem;
+}
+
+.stock-number {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--success);
+}
+
+.stock-number--low { color: var(--warning); }
+
+.stock-unit {
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+.stock-bar-section { margin-bottom: 0.75rem; }
+
+.stock-bar-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.stock-status-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Detail meta grid (shared with suppliers) */
+.detail-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem 1.5rem;
+}
+
+.meta-item { display: flex; flex-direction: column; gap: 0.25rem; }
+.meta-item--full { grid-column: 1 / -1; }
+
+.meta-label {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Forms */
+.consumable-form { display: flex; flex-direction: column; gap: 1rem; }
+
+.checkbox-row { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Stock adjustment modal */
+.stock-current-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  background: var(--bg-raised);
+  border-radius: var(--radius-md);
+  margin-bottom: 0.25rem;
+}
+
+.stock-current-val {
+  font-family: var(--font-mono);
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.type-toggle {
+  display: flex;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.type-pill {
+  padding: 0.3125rem 0.75rem;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.type-pill:hover { border-color: var(--border-raised); color: var(--text-primary); }
+
+.type-pill--active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.adjust-warning {
+  font-size: 0.8125rem;
+  color: var(--danger);
+  padding: 0.5rem 0.75rem;
+  background: var(--danger-bg);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 768px) {
+  .consumable-detail-grid { grid-template-columns: 1fr; }
+  .detail-meta-grid { grid-template-columns: 1fr; }
+}
+
+/* ---- Inline add consumable form ---- */
+.consumable-inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}

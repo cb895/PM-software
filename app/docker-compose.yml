@@ -1,0 +1,130 @@
+# =============================================================
+# MetabolicTrack Lab PM — Docker Compose
+# Intel N100 Mini PC · Ubuntu Server 24.04 LTS
+# =============================================================
+# Usage:
+#   First run:  docker compose up -d --build
+#   Start:      docker compose up -d
+#   Stop:       docker compose down
+#   Logs:       docker compose logs -f
+#   DB shell:   docker compose exec db psql -U labpm_user labpm
+# =============================================================
+
+services:
+
+  # -----------------------------------------------------------
+  # PostgreSQL database
+  # -----------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: labpm_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       labpm
+      POSTGRES_USER:     labpm_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./scripts/init:/docker-entrypoint-initdb.d   # runs SQL files on first boot
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labpm_user -d labpm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - labpm_net
+
+  # -----------------------------------------------------------
+  # FastAPI backend
+  # -----------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: labpm_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL:        postgresql://labpm_user:${DB_PASSWORD}@db:5432/labpm
+      SECRET_KEY:          ${SECRET_KEY}
+      FERNET_KEY:          ${FERNET_KEY}
+      UPLOAD_DIR:          /app/uploads
+      REPORTS_DIR:         /app/reports
+      ALLOWED_ORIGINS:     ${ALLOWED_ORIGINS:-http://localhost}
+      ANTHROPIC_API_KEY:   ${ANTHROPIC_API_KEY:-}
+      GMAIL_SENDER:        ${GMAIL_SENDER:-cb@metabolictrack.com}
+      GMAIL_APP_PASSWORD:  ${GMAIL_APP_PASSWORD:-}
+    volumes:
+      - uploads:/app/uploads
+      - reports:/app/reports
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - labpm_net
+
+  # -----------------------------------------------------------
+  # React frontend (built to static files, served by Nginx)
+  # -----------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: labpm_frontend
+    restart: unless-stopped
+    networks:
+      - labpm_net
+
+  # -----------------------------------------------------------
+  # Nginx reverse proxy
+  # Serves frontend static files + proxies /api to backend
+  # -----------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: labpm_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"       # HTTP — accessible on local network
+      # - "443:443"   # Uncomment when SSL is configured
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # - ./nginx/ssl:/etc/nginx/ssl:ro   # Uncomment for SSL certs
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - labpm_net
+
+  # -----------------------------------------------------------
+  # Cron job runner — scheduled tasks
+  # Runs missing log checks, KPI computation, weekly reports
+  # -----------------------------------------------------------
+  cron:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.cron
+    container_name: labpm_cron
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://labpm_user:${DB_PASSWORD}@db:5432/labpm
+      SECRET_KEY:   ${SECRET_KEY}
+      FERNET_KEY:   ${FERNET_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - labpm_net
+
+# -----------------------------------------------------------
+# Named volumes — data persists across container restarts
+# -----------------------------------------------------------
+volumes:
+  db_data:
+    driver: local
+  uploads:
+    driver: local
+  reports:
+    driver: local
+
+networks:
+  labpm_net:
+    driver: bridge
