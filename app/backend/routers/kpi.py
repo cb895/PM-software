@@ -131,7 +131,7 @@ async def compute_kpis(
     if period not in ("weekly", "monthly"):
         raise HTTPException(400, "Period must be 'weekly' or 'monthly'.")
     result = await db.execute(text(
-        "SELECT fn_compute_kpi_actuals(:p::kpi_period)"
+        "SELECT fn_compute_kpi_actuals(CAST(:p AS kpi_period))"
     ), {"p": period})
     count = result.scalar_one()
     await db.commit()

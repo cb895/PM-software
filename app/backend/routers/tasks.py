@@ -189,6 +189,9 @@ async def approve_delay_proposal(
 
     task_id, proposed_end = row
 
+    current = await db.execute(text("SELECT status FROM tasks WHERE id = :id"), {"id": task_id})
+    current_status = current.scalar_one()
+
     # Update task planned_end
     await db.execute(text("""
         UPDATE tasks SET planned_end = :proposed_end, updated_at = NOW()
@@ -203,12 +206,16 @@ async def approve_delay_proposal(
         WHERE id = :id
     """), {"uid": user.id, "notes": review_notes, "id": proposal_id})
 
-    # Write task history
+    # Write task history. This isn't a status change (only planned_end
+    # moves), so old/new_status are both the task's current status — the
+    # column is NOT NULL and a task_status enum, so it can't hold the
+    # placeholder values ('scheduled'/'rescheduled') this used to write,
+    # which aren't valid members of that enum in the first place.
     await db.execute(text("""
         INSERT INTO task_history (task_id, changed_by, old_status, new_status, notes)
-        VALUES (:tid, :uid, 'scheduled', 'rescheduled',
-                'Timeline updated from delay proposal — new end: ' || :proposed_end::TEXT)
-    """), {"tid": task_id, "uid": user.id, "proposed_end": proposed_end})
+        VALUES (:tid, :uid, :status, :status,
+                'Timeline updated from delay proposal — new end: ' || :proposed_end_str)
+    """), {"tid": task_id, "uid": user.id, "status": current_status, "proposed_end_str": str(proposed_end)})
 
     await db.commit()
     return {"message": "Delay approved. Task timeline updated."}

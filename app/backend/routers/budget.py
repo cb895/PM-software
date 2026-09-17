@@ -22,8 +22,8 @@ class PhaseBudgetUpdate(BaseModel):
     hourly_rate:            Optional[float] = None
     budget_alert_threshold: Optional[float] = None
     phase_name:             Optional[str]   = None
-    start_date:             Optional[str]   = None
-    end_date:               Optional[str]   = None
+    start_date:             Optional[date]  = None
+    end_date:               Optional[date]  = None
 
 class ManualEntryCreate(BaseModel):
     project_id:   int
@@ -31,7 +31,7 @@ class ManualEntryCreate(BaseModel):
     entry_type:   str           # 'labour' | 'consumable' | 'purchase_order'
     description:  Optional[str] = None
     amount:       float
-    entry_date:   Optional[str] = None
+    entry_date:   Optional[date] = None
 
 # ---- Endpoints ----
 
@@ -187,7 +187,7 @@ async def create_manual_entry(
             (project_id, phase_id, entry_type, description, amount, entry_date, created_by)
         VALUES
             (:project_id, :phase_id, :entry_type, :description, :amount,
-             COALESCE(:entry_date::DATE, CURRENT_DATE), :created_by)
+             COALESCE(CAST(:entry_date AS DATE), CURRENT_DATE), :created_by)
         RETURNING id
     """), {
         "project_id":  body.project_id,

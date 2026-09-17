@@ -5,7 +5,7 @@ from core.database import AsyncSessionLocal
 
 async def run(period: str):
     async with AsyncSessionLocal() as db:
-        result = await db.execute(text("SELECT fn_compute_kpi_actuals(:p::kpi_period)"), {"p": period})
+        result = await db.execute(text("SELECT fn_compute_kpi_actuals(CAST(:p AS kpi_period))"), {"p": period})
         count = result.scalar_one()
         await db.commit()
         print(f"KPI computation complete. Period: {period}. Records: {count}")

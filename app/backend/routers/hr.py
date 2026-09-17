@@ -287,15 +287,23 @@ async def review_leave_request(
     if req["status"] != 'pending':
         raise HTTPException(400, "Only pending requests can be reviewed.")
 
+    # hr_meeting_required is computed in Python rather than SQL: reusing the
+    # same bound parameter both as the enum value (SET status = :action) and
+    # in a text comparison (:action = 'approved') makes asyncpg unable to
+    # settle on one type for it ("inconsistent types deduced for parameter").
+    triggers_hr_meeting = (
+        body.action == "approved" and req["leave_type"] == "sick" and req["days_requested"] >= 5
+    )
     await db.execute(text("""
         UPDATE leave_requests
         SET status = :action, reviewed_by = :by,
             reviewed_at = NOW(), review_notes = :notes,
-            hr_meeting_required = CASE
-                WHEN :action = 'approved' AND leave_type = 'sick' AND days_requested >= 5
-                THEN TRUE ELSE hr_meeting_required END
+            hr_meeting_required = CASE WHEN :triggers THEN TRUE ELSE hr_meeting_required END
         WHERE id = :id
-    """), {"action": body.action, "by": user.id, "notes": body.review_notes, "id": request_id})
+    """), {
+        "action": body.action, "by": user.id, "notes": body.review_notes,
+        "triggers": triggers_hr_meeting, "id": request_id,
+    })
 
     # Handle PTO balance on approve/deny
     if req["leave_type"] == 'vacation':
@@ -463,7 +471,12 @@ async def get_calendar_events(
         where.append("ce.start_time >= :start")
         params["start"] = start
     if end:
-        where.append("ce.start_time <= :end")
+        # `end` is a date (midnight); comparing start_time <= :end excludes
+        # every event that day scheduled at any time after midnight — which
+        # is nearly all of them. Use an exclusive upper bound on the next day.
+        # (CAST(...), not ::date — SQLAlchemy's text() bind-param parser
+        # doesn't handle a parameter immediately followed by "::".)
+        where.append("ce.start_time < (CAST(:end AS date) + INTERVAL '1 day')")
         params["end"] = end
 
     where_sql = ("AND " + " AND ".join(where)) if where else ""
