@@ -113,7 +113,7 @@ RETURNS TRIGGER AS $$
 DECLARE
     v_code TEXT;
 BEGIN
-    IF NEW.status = 'approved' AND OLD.status != 'approved' AND NEW.po_number IS NULL THEN
+    IF NEW.status = 'new_order' AND OLD.status != 'new_order' AND NEW.po_number IS NULL THEN
         SELECT COALESCE(s.code, 'PND')
         INTO v_code
         FROM purchase_orders po

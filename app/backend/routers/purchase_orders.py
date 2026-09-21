@@ -221,11 +221,13 @@ async def approve_po(
     db    = Depends(get_db),
     user  = Depends(require_po_approver),
 ):
-    # PO number is assigned by DB trigger fn_assign_po_number on status → 'approved'
-    # Format: [SUPPLIER_CODE]-[YYMMDD] using the approval date
+    # 'approved' is not a po_status value — 'new_order' is the enum member
+    # for "approved, not yet sent to supplier" (see 01_schema.sql). PO
+    # number is assigned by DB trigger fn_assign_po_number on status →
+    # 'new_order'. Format: [SUPPLIER_CODE]-[YYMMDD] using the approval date.
     await db.execute(text("""
         UPDATE purchase_orders
-        SET status = 'approved', approved_by = :user_id,
+        SET status = 'new_order', approved_by = :user_id,
             updated_at = NOW()
         WHERE id = :po_id AND status = 'pending'
     """), {"po_id": po_id, "user_id": user.id})
