@@ -391,8 +391,6 @@ async def apply_template(
         "SELECT * FROM project_template_tasks WHERE template_id = :id ORDER BY sort_order, id"
     ), {"id": template_id})
     template_tasks = [dict(t) for t in tasks_result.mappings()]
-    if not template_tasks:
-        raise HTTPException(400, "Template has no tasks to apply.")
 
     # Base date — provided or project start_date or today
     if body.start_date:
