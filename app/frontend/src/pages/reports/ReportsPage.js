@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
@@ -165,13 +165,17 @@ function ReportDetail() {
     queryFn: () => api.get(`/reports/${id}`).then(r => {
       return r.data;
     }),
-    onSuccess: (data) => {
-      setExecSummary(data.executive_summary || '');
-      const notes = {};
-      data.sections?.forEach(s => { notes[s.project_id] = s.ops_notes || ''; });
-      setOpsNotes(notes);
-    },
   });
+
+  // react-query v5 dropped the onSuccess callback on useQuery, so state
+  // that mirrors server data has to be synced explicitly when it changes.
+  useEffect(() => {
+    if (!report) return;
+    setExecSummary(report.executive_summary || '');
+    const notes = {};
+    report.sections?.forEach(s => { notes[s.project_id] = s.ops_notes || ''; });
+    setOpsNotes(notes);
+  }, [report]);
 
   const saveSummaryMutation = useMutation({
     mutationFn: () => api.patch(`/reports/${id}`, { executive_summary: execSummary }),
