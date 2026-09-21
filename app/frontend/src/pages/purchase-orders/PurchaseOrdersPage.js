@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import {
-  PageHeader, Button, Card, Table, Th, Td,
+  PageHeader, Button, Card, CardHeader, Table, Th, Td,
   POStatusBadge, RiskBadge, PriorityBadge,
   Badge, Modal, Input, Textarea, EmptyState,
   LoadingState, StatCard
@@ -149,7 +149,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
   const [form, setForm] = useState({
     project_id: '', is_overhead: false, supplier_id: '', supplier_name_free: '',
     priority: 'normal', risk_level: '', urgency: 'normal', notes: '',
-    items: [{ description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '' }],
+    items: [{ description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '', consumable_id: '' }],
   });
 
   const { data: projects } = useQuery({
@@ -161,6 +161,12 @@ function CreatePOModal({ open, onClose, onSuccess }) {
   const { data: suppliers } = useQuery({
     queryKey: ['suppliers-list'],
     queryFn: () => api.get('/suppliers?active=true').then(r => r.data),
+    enabled: open,
+  });
+
+  const { data: consumables } = useQuery({
+    queryKey: ['consumables-dropdown'],
+    queryFn: () => api.get('/consumables/dropdown').then(r => r.data),
     enabled: open,
   });
 
@@ -179,7 +185,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
 
   const addItem = () => setForm(f => ({
     ...f,
-    items: [...f.items, { description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '' }],
+    items: [...f.items, { description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '', consumable_id: '' }],
   }));
 
   const removeItem = i => setForm(f => ({ ...f, items: f.items.filter((_, idx) => idx !== i) }));
@@ -209,6 +215,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
         quantity_ordered:   parseFloat(it.quantity_ordered) || 1,
         unit:               it.unit              || 'each',
         unit_cost_estimate: it.unit_cost_estimate ? parseFloat(it.unit_cost_estimate) : null,
+        consumable_id:      it.consumable_id ? parseInt(it.consumable_id) : null,
         notes:              it.notes             || null,
       })),
     });
@@ -302,6 +309,16 @@ function CreatePOModal({ open, onClose, onSuccess }) {
                   onChange={e => setItem(i, 'product_url', e.target.value)}
                   placeholder="https://…"
                 />
+                <div className="field">
+                  {i === 0 && <label className="field-label">Restocks inventory item</label>}
+                  <select className="field-input" value={item.consumable_id}
+                    onChange={e => setItem(i, 'consumable_id', e.target.value)}>
+                    <option value="">Not tracked as inventory</option>
+                    {consumables?.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}{c.sku ? ` (${c.sku})` : ''} — {c.current_stock} {c.unit}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="line-item-nums">
                 <Input
@@ -381,8 +398,13 @@ function PODetail() {
     onSuccess: () => { toast.success('Request rejected.'); qc.invalidateQueries(['purchase-order', id]); },
   });
 
+  const [showReceive, setShowReceive] = useState(false);
+
   if (isLoading) return <LoadingState />;
   if (!po) return <EmptyState title="PO not found" action={<Button onClick={() => navigate('/purchase-orders')}>Back</Button>} />;
+
+  const canReceive = !['pending', 'rejected', 'closed'].includes(po.status);
+  const hasRemaining = po.line_items?.some(it => (it.quantity_received || 0) < it.quantity_ordered - 0.001);
 
   return (
     <div>
@@ -404,6 +426,11 @@ function PODetail() {
                   Reject
                 </Button>
               </>
+            )}
+            {hasRole('ops_manager', 'ceo', 'qm_director') && canReceive && hasRemaining && (
+              <Button variant="primary" onClick={() => setShowReceive(true)}>
+                Receive delivery
+              </Button>
             )}
           </div>
         }
@@ -439,6 +466,7 @@ function PODetail() {
                 <Th>Unit</Th>
                 <Th>Unit cost</Th>
                 <Th>Total</Th>
+                <Th>Received</Th>
               </tr>
             </thead>
             <tbody>
@@ -459,13 +487,124 @@ function PODetail() {
                   <Td>{item.unit}</Td>
                   <Td>{formatCurrency(item.unit_cost_estimate)}</Td>
                   <Td>{formatCurrency((item.quantity_ordered || 0) * (item.unit_cost_estimate || 0))}</Td>
+                  <Td>
+                    <span className={(item.quantity_received || 0) >= item.quantity_ordered - 0.001 ? 'text-success' : ''}>
+                      {item.quantity_received || 0} / {item.quantity_ordered}
+                    </span>
+                    {item.consumable_id && <span className="item-link" style={{ display: 'block', fontSize: '0.75rem' }}>restocks inventory</span>}
+                  </Td>
                 </tr>
               ))}
             </tbody>
           </Table>
         </Card>
+
+        {po.receipts?.length > 0 && (
+          <Card className="po-detail-receipts">
+            <CardHeader title="Receiving history" />
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Date</Th>
+                  <Th>Quantity</Th>
+                  <Th>Received by</Th>
+                  <Th>Notes</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {po.receipts.map(r => (
+                  <tr key={r.id}>
+                    <Td>{formatDate(r.received_date)}</Td>
+                    <Td>{r.quantity_received}</Td>
+                    <Td>{r.received_by}</Td>
+                    <Td>{r.notes || '—'}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </Card>
+        )}
       </div>
+
+      <ReceiveModal
+        open={showReceive}
+        po={po}
+        onClose={() => setShowReceive(false)}
+        onSuccess={() => { setShowReceive(false); qc.invalidateQueries(['purchase-order', id]); qc.invalidateQueries(['consumables']); }}
+      />
     </div>
+  );
+}
+
+/* ---- Receive delivery modal ---- */
+function ReceiveModal({ open, po, onClose, onSuccess }) {
+  const remainingItems = (po?.line_items || []).filter(it => (it.quantity_received || 0) < it.quantity_ordered - 0.001);
+  const [quantities, setQuantities] = useState({});
+
+  useEffect(() => {
+    if (open) {
+      const initial = {};
+      remainingItems.forEach(it => {
+        initial[it.id] = (it.quantity_ordered - (it.quantity_received || 0)).toString();
+      });
+      setQuantities(initial);
+    }
+  }, [open, po?.id]);
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/purchase-orders/${po.id}/receive`, {
+      items: remainingItems
+        .map(it => ({ line_item_id: it.id, quantity_received: parseFloat(quantities[it.id]) || 0 }))
+        .filter(it => it.quantity_received > 0),
+    }),
+    onSuccess: (res) => {
+      toast.success(res.data.fully_received ? 'Delivery received — PO marked received.' : 'Partial delivery recorded.');
+      onSuccess();
+    },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to record receipt.'),
+  });
+
+  const handleSubmit = e => {
+    e.preventDefault();
+    const anyPositive = Object.values(quantities).some(v => parseFloat(v) > 0);
+    if (!anyPositive) { toast.error('Enter a quantity for at least one item.'); return; }
+    mutation.mutate();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Receive delivery" size="md">
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+          Enter how much of each item actually arrived. Leave at 0 to skip an
+          item this delivery — partial shipments are fine, you can receive
+          the rest later.
+        </p>
+        {remainingItems.map(it => {
+          const remaining = it.quantity_ordered - (it.quantity_received || 0);
+          return (
+            <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '0.875rem' }}>{it.description}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  {remaining} {it.unit} remaining
+                  {it.consumable_id && ' · restocks inventory'}
+                </div>
+              </div>
+              <Input
+                type="number" min="0" max={remaining} step="any"
+                value={quantities[it.id] ?? ''}
+                onChange={e => setQuantities(q => ({ ...q, [it.id]: e.target.value }))}
+                style={{ width: '100px' }}
+              />
+            </div>
+          );
+        })}
+        <div className="modal-footer">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={mutation.isPending}>Record receipt</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

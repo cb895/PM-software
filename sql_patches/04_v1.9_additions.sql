@@ -107,11 +107,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- PO number assigned on approval: [SUPPLIER_CODE]-[YYMMDD]
+-- PO number assigned on approval: [SUPPLIER_CODE]-[YYMMDD], with a -2, -3...
+-- suffix if that supplier already has a PO approved the same day (po_number
+-- is UNIQUE, and a lab ordering twice from one supplier in a day is normal).
 CREATE OR REPLACE FUNCTION fn_assign_po_number()
 RETURNS TRIGGER AS $$
 DECLARE
-    v_code TEXT;
+    v_code      TEXT;
+    v_base      TEXT;
+    v_candidate TEXT;
+    v_suffix    INTEGER := 1;
 BEGIN
     IF NEW.status = 'new_order' AND OLD.status != 'new_order' AND NEW.po_number IS NULL THEN
         SELECT COALESCE(s.code, 'PND')
@@ -120,7 +125,13 @@ BEGIN
         LEFT JOIN suppliers s ON s.id = po.supplier_id
         WHERE po.id = NEW.id;
 
-        NEW.po_number := UPPER(COALESCE(v_code,'PND')) || '-' || TO_CHAR(NOW(), 'YYMMDD');
+        v_base := UPPER(COALESCE(v_code,'PND')) || '-' || TO_CHAR(NOW(), 'YYMMDD');
+        v_candidate := v_base;
+        WHILE EXISTS (SELECT 1 FROM purchase_orders WHERE po_number = v_candidate) LOOP
+            v_suffix := v_suffix + 1;
+            v_candidate := v_base || '-' || v_suffix;
+        END LOOP;
+        NEW.po_number := v_candidate;
     END IF;
     RETURN NEW;
 END;

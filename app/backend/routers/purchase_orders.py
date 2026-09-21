@@ -45,6 +45,16 @@ class RejectIn(BaseModel):
     reason: str
 
 
+class ReceiptItemIn(BaseModel):
+    line_item_id:      int
+    quantity_received: float
+    notes:             Optional[str] = None
+
+
+class ReceivePOIn(BaseModel):
+    items: List[ReceiptItemIn]
+
+
 # ---- Helpers ----
 
 PO_SUMMARY_SQL = """
@@ -205,14 +215,33 @@ async def get_purchase_order(
     if not po:
         raise HTTPException(404, "Purchase order not found.")
 
-    # Fetch line items
+    # Fetch line items, with how much of each has been received so far
     items_result = await db.execute(text("""
-        SELECT id, description, product_id, product_url,
-               quantity_ordered, unit, unit_cost_estimate, unit_cost_actual, notes
-        FROM po_line_items WHERE po_id = :po_id ORDER BY id
+        SELECT li.id, li.description, li.product_id, li.product_url,
+               li.quantity_ordered, li.unit, li.unit_cost_estimate, li.unit_cost_actual,
+               li.consumable_id, li.notes,
+               COALESCE(SUM(pr.quantity_received), 0) AS quantity_received
+        FROM po_line_items li
+        LEFT JOIN po_receipts pr ON pr.line_item_id = li.id
+        WHERE li.po_id = :po_id
+        GROUP BY li.id
+        ORDER BY li.id
     """), {"po_id": po_id})
 
-    return {**dict(po), "line_items": [dict(r) for r in items_result.mappings()]}
+    receipts_result = await db.execute(text("""
+        SELECT pr.id, pr.line_item_id, pr.quantity_received, pr.received_date, pr.notes,
+               u.full_name AS received_by
+        FROM po_receipts pr
+        JOIN users u ON u.id = pr.received_by
+        WHERE pr.po_id = :po_id
+        ORDER BY pr.received_date DESC, pr.id DESC
+    """), {"po_id": po_id})
+
+    return {
+        **dict(po),
+        "line_items": [dict(r) for r in items_result.mappings()],
+        "receipts": [dict(r) for r in receipts_result.mappings()],
+    }
 
 
 @router.post("/{po_id}/approve")
@@ -268,6 +297,120 @@ async def reject_po(
 
     await db.commit()
     return {"message": "Rejected."}
+
+
+@router.post("/{po_id}/receive")
+async def receive_po(
+    po_id: int,
+    body:  ReceivePOIn,
+    db     = Depends(get_db),
+    user   = Depends(require_po_approver),
+):
+    """
+    Record a delivery against one or more line items — full or partial.
+    Supports multiple receipts over time per line item (e.g. two shipments
+    for one ordered quantity). Any line item linked to a consumable
+    (po_line_items.consumable_id) restocks that consumable's live stock by
+    the quantity actually received. Once every line item on the PO has been
+    received in full, the PO itself flips to 'received'.
+    """
+    po_result = await db.execute(text(
+        "SELECT status FROM purchase_orders WHERE id = :id"
+    ), {"id": po_id})
+    po_row = po_result.mappings().one_or_none()
+    if not po_row:
+        raise HTTPException(404, "Purchase order not found.")
+    if po_row["status"] in ("pending", "rejected", "closed"):
+        raise HTTPException(400, f"Cannot record a receipt on a PO with status '{po_row['status']}'.")
+
+    if not body.items:
+        raise HTTPException(400, "At least one line item receipt is required.")
+
+    li_result = await db.execute(text("""
+        SELECT li.id, li.description, li.quantity_ordered, li.unit, li.consumable_id,
+               COALESCE(SUM(pr.quantity_received), 0) AS already_received
+        FROM po_line_items li
+        LEFT JOIN po_receipts pr ON pr.line_item_id = li.id
+        WHERE li.po_id = :po_id
+        GROUP BY li.id
+    """), {"po_id": po_id})
+    line_items = {row["id"]: row for row in li_result.mappings()}
+
+    for item in body.items:
+        li = line_items.get(item.line_item_id)
+        if not li:
+            raise HTTPException(400, f"Line item {item.line_item_id} does not belong to this PO.")
+        if item.quantity_received <= 0:
+            raise HTTPException(400, "Quantity received must be greater than zero.")
+        remaining = float(li["quantity_ordered"]) - float(li["already_received"])
+        if item.quantity_received > remaining + 1e-9:
+            raise HTTPException(
+                400,
+                f"'{li['description']}': only {remaining:g} {li['unit']} remaining to receive "
+                f"(got {item.quantity_received:g})."
+            )
+
+    for item in body.items:
+        li = line_items[item.line_item_id]
+
+        await db.execute(text("""
+            INSERT INTO po_receipts (po_id, line_item_id, received_by, quantity_received, notes)
+            VALUES (:po_id, :line_item_id, :user_id, :qty, :notes)
+        """), {
+            "po_id": po_id, "line_item_id": item.line_item_id, "user_id": user.id,
+            "qty": item.quantity_received, "notes": item.notes,
+        })
+
+        if li["consumable_id"]:
+            await db.execute(text("""
+                UPDATE consumables
+                SET current_stock = current_stock + :qty,
+                    last_restocked = CURRENT_DATE, updated_at = NOW()
+                WHERE id = :cid
+            """), {"qty": item.quantity_received, "cid": li["consumable_id"]})
+
+            await db.execute(text("""
+                INSERT INTO consumable_transactions
+                    (consumable_id, user_id, quantity_change, transaction_type, notes)
+                VALUES (:cid, :uid, :qty, 'restock', :notes)
+            """), {
+                "cid": li["consumable_id"], "uid": user.id, "qty": item.quantity_received,
+                "notes": f"Received on PO #{po_id}",
+            })
+
+    await db.execute(text("""
+        UPDATE purchase_orders
+        SET receiver_id = :uid, received_date = CURRENT_DATE, updated_at = NOW()
+        WHERE id = :po_id
+    """), {"uid": user.id, "po_id": po_id})
+
+    # Per-line-item totals first (a line item with more than one receipt
+    # joins to more than one po_receipts row, so summing quantity_ordered
+    # across the flat join double-counts it) — then check every item.
+    fully_result = await db.execute(text("""
+        SELECT bool_and(item_received >= item_ordered - 0.001) AS fully_received
+        FROM (
+            SELECT li.id, li.quantity_ordered AS item_ordered,
+                   COALESCE(SUM(pr.quantity_received), 0) AS item_received
+            FROM po_line_items li
+            LEFT JOIN po_receipts pr ON pr.line_item_id = li.id
+            WHERE li.po_id = :po_id
+            GROUP BY li.id, li.quantity_ordered
+        ) sub
+    """), {"po_id": po_id})
+    fully_received = bool(fully_result.scalar_one())
+
+    if fully_received and po_row["status"] != "received":
+        await db.execute(text("""
+            UPDATE purchase_orders SET status = 'received', updated_at = NOW() WHERE id = :id
+        """), {"id": po_id})
+        await db.execute(text("""
+            INSERT INTO po_status_history (po_id, changed_by, old_status, new_status, notes)
+            VALUES (:po_id, :uid, :old, 'received', 'Fully received')
+        """), {"po_id": po_id, "uid": user.id, "old": po_row["status"]})
+
+    await db.commit()
+    return {"message": "Receipt recorded.", "fully_received": fully_received}
 
 
 @router.patch("/{po_id}/status")
