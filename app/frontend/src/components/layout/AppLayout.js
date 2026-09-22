@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/client';
+import { formatDate } from '../../utils/format';
 import './AppLayout.css';
 
 const NAV_ITEMS = [
@@ -30,12 +31,28 @@ const ROLE_LABELS = {
 export default function AppLayout() {
   const { user, logout, hasRole } = useAuth();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [collapsed, setCollapsed] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   const { data: notifications } = useQuery({
     queryKey: ['notifications-unread'],
     queryFn: () => api.get('/notifications?unread=true').then(r => r.data),
     refetchInterval: 30000,
+  });
+
+  const { data: notificationFeed } = useQuery({
+    queryKey: ['notifications-feed'],
+    queryFn: () => api.get('/notifications').then(r => r.data),
+    enabled: showNotifications,
+  });
+
+  const markReadMutation = useMutation({
+    mutationFn: id => api.patch(`/notifications/${id}/read`),
+    onSuccess: () => {
+      qc.invalidateQueries(['notifications-unread']);
+      qc.invalidateQueries(['notifications-feed']);
+    },
   });
 
   const unreadCount = notifications?.length || 0;
@@ -110,13 +127,41 @@ export default function AppLayout() {
       <div className="main-content">
         <header className="topbar">
           <div className="topbar-left" />
-          <div className="topbar-right">
-            <button className="notif-btn" aria-label={`${unreadCount} unread notifications`}>
+          <div className="topbar-right" style={{ position: 'relative' }}>
+            <button className="notif-btn" aria-label={`${unreadCount} unread notifications`}
+              onClick={() => setShowNotifications(v => !v)}>
               <span aria-hidden="true">◔</span>
               {unreadCount > 0 && (
                 <span className="notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>
               )}
             </button>
+            {showNotifications && (
+              <div className="notif-panel">
+                <div className="notif-panel-header">
+                  <strong>Notifications</strong>
+                  <button className="notif-panel-close" onClick={() => setShowNotifications(false)} aria-label="Close">×</button>
+                </div>
+                <div className="notif-panel-list">
+                  {!notificationFeed ? (
+                    <p className="notif-panel-empty">Loading…</p>
+                  ) : notificationFeed.length === 0 ? (
+                    <p className="notif-panel-empty">No notifications yet.</p>
+                  ) : (
+                    notificationFeed.map(n => (
+                      <button
+                        key={n.id}
+                        className={`notif-item ${n.is_read ? '' : 'notif-item--unread'}`}
+                        onClick={() => !n.is_read && markReadMutation.mutate(n.id)}
+                      >
+                        <span className="notif-item-title">{n.title}</span>
+                        <span className="notif-item-message">{n.message}</span>
+                        <span className="notif-item-date">{formatDate(n.created_at, 'MMM d, h:mm a')}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </header>
         <main className="page-content">
