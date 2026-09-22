@@ -8,3 +8,10 @@
 
 # Auto-generate reorder POs for low-stock consumables (weekdays 10am)
 0 10 * * 1-5   . /app/cron_env.sh && psql "$DATABASE_URL" -c "SELECT fn_auto_reorder_pos();" >> /var/log/labpm_cron.log 2>&1
+
+# Refresh the in/out status board from approved leave data (weekday mornings,
+# before the missing_logs/reorder jobs). Without this, fn_sync_staff_status()
+# only ran when a leave request happened to be approved elsewhere or someone
+# clicked "Sync from leave data" — so a status set by leave starting/ending
+# could go stale for days with no approvals in between.
+0 6 * * 1-5    . /app/cron_env.sh && psql "$DATABASE_URL" -c "SELECT fn_sync_staff_status();" >> /var/log/labpm_cron.log 2>&1

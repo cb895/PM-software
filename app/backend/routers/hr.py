@@ -305,25 +305,10 @@ async def review_leave_request(
         "triggers": triggers_hr_meeting, "id": request_id,
     })
 
-    # Handle PTO balance on approve/deny
-    if req["leave_type"] == 'vacation':
-        if body.action == 'approved':
-            await db.execute(text("""
-                UPDATE leave_balances
-                SET pto_pending = GREATEST(pto_pending - :days, 0),
-                    pto_used    = pto_used + :days,
-                    updated_at  = NOW()
-                WHERE user_id = :uid AND year = :yr
-            """), {"days": req["days_requested"], "uid": req["user_id"],
-                   "yr": req["start_date"].year})
-        elif body.action == 'denied':
-            await db.execute(text("""
-                UPDATE leave_balances
-                SET pto_pending = GREATEST(pto_pending - :days, 0),
-                    updated_at  = NOW()
-                WHERE user_id = :uid AND year = :yr
-            """), {"days": req["days_requested"], "uid": req["user_id"],
-                   "yr": req["start_date"].year})
+    # PTO balance (pending -> used on approve, pending released on deny) is
+    # handled by the trg_pto_on_approval trigger on the UPDATE above — it
+    # used to also be applied here, which double-counted every approval
+    # (pto_used ended up +2x days_requested, pto_pending over-released).
 
     # If approved, auto-add to calendar
     if body.action == 'approved':
@@ -383,25 +368,13 @@ async def cancel_leave_request(
     if req["status"] == 'cancelled':
         raise HTTPException(400, "Already cancelled.")
 
-    old_status = req["status"]
     await db.execute(text(
         "UPDATE leave_requests SET status = 'cancelled', updated_at = NOW() WHERE id = :id"
     ), {"id": request_id})
 
-    # Release balance
-    if req["leave_type"] == 'vacation':
-        if old_status == 'pending':
-            await db.execute(text("""
-                UPDATE leave_balances
-                SET pto_pending = GREATEST(pto_pending - :days, 0), updated_at = NOW()
-                WHERE user_id = :uid AND year = :yr
-            """), {"days": req["days_requested"], "uid": req["user_id"], "yr": req["start_date"].year})
-        elif old_status == 'approved':
-            await db.execute(text("""
-                UPDATE leave_balances
-                SET pto_used = GREATEST(pto_used - :days, 0), updated_at = NOW()
-                WHERE user_id = :uid AND year = :yr
-            """), {"days": req["days_requested"], "uid": req["user_id"], "yr": req["start_date"].year})
+    # Balance release (pending or used, depending on the prior status) is
+    # handled by the trg_pto_on_approval trigger on the UPDATE above — it
+    # used to also be applied here, which double-released the balance.
 
     await db.commit()
     return {"message": "Request cancelled."}

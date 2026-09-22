@@ -76,6 +76,7 @@ docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/02_fix_kpi.sql           la
 docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/03_apply_hr_schema.sql   labpm_db:/03.sql
 docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/04_v1.9_additions.sql    labpm_db:/04.sql
 docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/05_apply_overhead_po.sql labpm_db:/05.sql
+docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/06_fix_staff_status_sync.sql labpm_db:/06.sql
 
 # Run them in order
 docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /01.sql
@@ -83,6 +84,7 @@ docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user l
 docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /03.sql
 docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /04.sql
 docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /05.sql
+docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /06.sql
 ```
 
 Each patch is safe to re-run if needed (uses IF NOT EXISTS).

@@ -208,10 +208,20 @@ BEGIN
                     last_updated = NOW()
             WHERE NOT staff_status.manual_override;
         ELSE
-            -- No leave — ensure status record exists
-            INSERT INTO staff_status (user_id, status, auto_status, manual_override)
-            VALUES (v_user.id, 'in_office', NULL, FALSE)
-            ON CONFLICT (user_id) DO NOTHING;
+            -- No active leave today — clear any stale auto-status (e.g. a
+            -- previous approved leave period that has since ended) back to
+            -- in_office. DO NOTHING here would leave a status like 'sick'
+            -- or 'off' stuck forever once set, since this function is the
+            -- only thing that ever clears it and it only ever ran again
+            -- when some other leave request happened to get approved.
+            -- Never touches a manually-overridden status.
+            INSERT INTO staff_status (user_id, status, auto_status, manual_override, last_updated)
+            VALUES (v_user.id, 'in_office', NULL, FALSE, NOW())
+            ON CONFLICT (user_id) DO UPDATE
+                SET status       = 'in_office',
+                    auto_status  = NULL,
+                    last_updated = NOW()
+            WHERE NOT staff_status.manual_override;
         END IF;
     END LOOP;
 END;
