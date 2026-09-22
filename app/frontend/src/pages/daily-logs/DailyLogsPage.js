@@ -423,7 +423,7 @@ function TodayLog() {
       await api.post('/daily-logs/today/submit');
       // Fire delay analysis for each entry that has blockers + linked tasks
       const entriesWithBlockers = entries.filter(
-        e => e.issues_blockers && e.task_updates?.length > 0
+        e => e.issues_blockers && e.tasks?.some(t => t.task_id)
       );
       const proposals = [];
       for (const entry of entriesWithBlockers) {
