@@ -25,8 +25,18 @@ class SupplierCreate(BaseModel):
     onboarding_status:  Optional[str] = 'To do'
     is_active:          bool = True
 
-class SupplierUpdate(SupplierCreate):
-    name: Optional[str] = None
+class SupplierUpdate(BaseModel):
+    name:               Optional[str] = None
+    code:               Optional[str] = None
+    supplier_type:      Optional[str] = None
+    contact_name:       Optional[str] = None
+    phone:              Optional[str] = None
+    email:              Optional[str] = None
+    address:            Optional[str] = None
+    website:            Optional[str] = None
+    notes:              Optional[str] = None
+    onboarding_status:  Optional[str] = None
+    is_active:          Optional[bool] = None
 
 class CredentialsUpdate(BaseModel):
     portal_url:     Optional[str] = None
