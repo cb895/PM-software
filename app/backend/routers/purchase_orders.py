@@ -9,7 +9,7 @@ from typing import Optional, List
 from datetime import date
 
 from core.database import get_db
-from core.security import get_current_user, require_roles, require_po_approver
+from core.security import get_current_user, require_po_approver
 from services.document_service import dispatch_po_approved
 
 router = APIRouter()
@@ -250,6 +250,15 @@ async def approve_po(
     db    = Depends(get_db),
     user  = Depends(require_po_approver),
 ):
+    result = await db.execute(text(
+        "SELECT status FROM purchase_orders WHERE id = :id"
+    ), {"id": po_id})
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(404, "Purchase order not found.")
+    if row[0] != 'pending':
+        raise HTTPException(400, f"Only pending POs can be approved (current status: {row[0]}).")
+
     # 'approved' is not a po_status value — 'new_order' is the enum member
     # for "approved, not yet sent to supplier" (see 01_schema.sql). PO
     # number is assigned by DB trigger fn_assign_po_number on status →
@@ -282,8 +291,17 @@ async def reject_po(
     po_id: int,
     body:  RejectIn,
     db    = Depends(get_db),
-    user  = Depends(require_roles("ops_manager")),
+    user  = Depends(require_po_approver),
 ):
+    result = await db.execute(text(
+        "SELECT status FROM purchase_orders WHERE id = :id"
+    ), {"id": po_id})
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(404, "Purchase order not found.")
+    if row[0] != 'pending':
+        raise HTTPException(400, f"Only pending POs can be rejected (current status: {row[0]}).")
+
     await db.execute(text("""
         UPDATE purchase_orders
         SET status = 'rejected', rejection_reason = :reason, updated_at = NOW()
@@ -419,7 +437,7 @@ async def update_po_status(
     new_status: str,
     notes:      Optional[str] = None,
     db          = Depends(get_db),
-    user        = Depends(require_roles("ops_manager")),
+    user        = Depends(require_po_approver),
 ):
     valid = ['new_order','emailed','in_progress','stuck','received','invoiced','closed']
     if new_status not in valid:

@@ -78,7 +78,7 @@ async def list_logs(
     return [dict(r) for r in result.mappings()]
 
 @router.get("/missing")
-async def missing_logs(db = Depends(get_db), user = Depends(require_roles("ops_manager"))):
+async def missing_logs(db = Depends(get_db), user = Depends(require_roles("ops_manager", "ceo"))):
     result = await db.execute(text("""
         SELECT u.id, u.full_name, mlf.missing_date
         FROM missing_log_flags mlf

@@ -66,7 +66,7 @@ function DailyLogsList() {
   const { data: missing } = useQuery({
     queryKey: ['missing-logs'],
     queryFn: () => api.get('/daily-logs/missing').then(r => r.data),
-    enabled: hasRole('ops_manager'),
+    enabled: hasRole('ops_manager', 'ceo'),
   });
 
   return (

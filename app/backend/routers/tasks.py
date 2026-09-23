@@ -6,7 +6,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from datetime import date
 from core.database import get_db
-from core.security import get_current_user, require_roles, require_task_editor
+from core.security import get_current_user, require_task_editor
 
 router = APIRouter()
 
@@ -147,7 +147,7 @@ async def list_users(db = Depends(get_db), user = Depends(get_current_user)):
 async def list_delay_proposals(
     status: Optional[str] = Query("pending"),
     db     = Depends(get_db),
-    user   = Depends(require_roles("ops_manager")),
+    user   = Depends(require_task_editor),
 ):
     result = await db.execute(text("""
         SELECT
@@ -175,7 +175,7 @@ async def approve_delay_proposal(
     proposal_id: int,
     review_notes: Optional[str] = None,
     db   = Depends(get_db),
-    user = Depends(require_roles("ops_manager")),
+    user = Depends(require_task_editor),
 ):
     # Get proposal
     result = await db.execute(text("""
@@ -226,7 +226,7 @@ async def dismiss_delay_proposal(
     proposal_id: int,
     review_notes: Optional[str] = None,
     db   = Depends(get_db),
-    user = Depends(require_roles("ops_manager")),
+    user = Depends(require_task_editor),
 ):
     await db.execute(text("""
         UPDATE task_delay_proposals

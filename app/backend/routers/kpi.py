@@ -6,7 +6,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 from datetime import date
 from core.database import get_db
-from core.security import require_roles, require_kpi_access, require_kpi_manager
+from core.security import require_kpi_access, require_kpi_manager
 
 router = APIRouter()
 
@@ -31,7 +31,7 @@ class KpiTargetCreate(BaseModel):
 async def kpi_summary(
     period: Optional[str] = Query(None),
     db     = Depends(get_db),
-    user   = Depends(require_roles("ops_manager")),
+    user   = Depends(require_kpi_access),
 ):
     params = {}
     where  = ["kt.is_active = TRUE"]
@@ -126,7 +126,7 @@ async def deactivate_target(
 async def compute_kpis(
     period: str = Query("weekly"),
     db     = Depends(get_db),
-    user   = Depends(require_roles("ops_manager")),
+    user   = Depends(require_kpi_manager),
 ):
     if period not in ("weekly", "monthly"):
         raise HTTPException(400, "Period must be 'weekly' or 'monthly'.")
