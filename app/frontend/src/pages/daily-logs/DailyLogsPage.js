@@ -84,7 +84,7 @@ function DailyLogsList() {
       />
 
       <div className="stats-row">
-        {hasRole('ops_manager') && (
+        {hasRole('ops_manager', 'ceo') && (
           <StatCard label="Missing logs" value={missing?.length ?? '—'} sub="from yesterday" danger={missing?.length > 0} />
         )}
         <StatCard
@@ -102,7 +102,7 @@ function DailyLogsList() {
         </div>
       </Card>
 
-      {hasRole('ops_manager') && missing?.length > 0 && (
+      {hasRole('ops_manager', 'ceo') && missing?.length > 0 && (
         <Card className="missing-alert">
           <CardHeader title="Missing logs — yesterday" />
           <div className="missing-list">
@@ -170,7 +170,7 @@ function DailyLogsList() {
           </thead>
           <tbody>
             {logs.map(log => (
-              <tr key={log.log_id} onClick={() => navigate(`/daily-logs/${log.log_id}`)} style={{ cursor: 'pointer' }}>
+              <tr key={log.id} onClick={() => navigate(`/daily-logs/${log.id}`)} style={{ cursor: 'pointer' }}>
                 <Td>{formatDate(log.log_date)}</Td>
                 <Td>{log.employee}</Td>
                 <Td>

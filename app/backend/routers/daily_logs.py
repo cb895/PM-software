@@ -307,9 +307,6 @@ async def get_log_detail(log_id: int, db = Depends(get_db), user = Depends(get_c
     if not log:
         from fastapi import HTTPException
         raise HTTPException(404, "Log not found.")
-    if user.role == "lab_tech" and log["user_id"] != user.id:
-        from fastapi import HTTPException
-        raise HTTPException(403, "Access denied.")
 
     entries_result = await db.execute(text("""
         SELECT dle.id, p.code AS project_code, p.name AS project_name,

@@ -38,7 +38,6 @@ function ConsumablesList() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
-  const [tab, setTab]                 = useState('list');
   const [search, setSearch]           = useState('');
   const [catFilter, setCatFilter]     = useState('');
   const [showLowOnly, setShowLowOnly] = useState(false);
@@ -78,12 +77,7 @@ function ConsumablesList() {
         title="Consumables"
         subtitle="Inventory, stock levels, and reorder tracking"
         action={
-          hasRole('ops_manager') && (
-            <div style={{ display:'flex', gap:'0.5rem' }}>
-            <Button variant={tab==='list'?'primary':'secondary'} onClick={() => setTab('list')}>Inventory</Button>
-            <Button variant={tab==='add'?'primary':'secondary'} onClick={() => setTab('add')}>+ Add item</Button>
-          </div>
-          )
+          <Button variant="primary" onClick={() => setShowCreate(true)}>+ Add item</Button>
         }
       />
 
@@ -142,9 +136,7 @@ function ConsumablesList() {
         <EmptyState
           title="No consumables found"
           description={search ? `No results for "${search}".` : 'No consumables in inventory.'}
-          action={hasRole('ops_manager') && (
-            <Button variant="primary" onClick={() => setShowCreate(true)}>Add item</Button>
-          )}
+          action={<Button variant="primary" onClick={() => setShowCreate(true)}>Add item</Button>}
         />
       ) : (
         <Table>
@@ -199,13 +191,11 @@ function ConsumablesList() {
         </Table>
       )}
 
-      {hasRole('ops_manager') && (
-        <CreateConsumableModal
-          open={showCreate}
-          onClose={() => setShowCreate(false)}
-          onSuccess={() => { setShowCreate(false); qc.invalidateQueries(['consumables']); }}
-        />
-      )}
+      <CreateConsumableModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onSuccess={() => { setShowCreate(false); qc.invalidateQueries(['consumables']); }}
+      />
     </div>
   );
 }
@@ -262,11 +252,9 @@ function ConsumableDetail() {
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <Button variant="secondary" onClick={() => navigate('/consumables')}>← Back</Button>
             {hasRole('ops_manager') && (
-              <>
-                <Button variant="secondary" onClick={() => setShowAdjust(true)}>Adjust stock</Button>
-                <Button variant="secondary" onClick={() => setShowEdit(true)}>Edit</Button>
-              </>
+              <Button variant="secondary" onClick={() => setShowAdjust(true)}>Adjust stock</Button>
             )}
+            <Button variant="secondary" onClick={() => setShowEdit(true)}>Edit</Button>
           </div>
         }
       />
@@ -403,21 +391,19 @@ function ConsumableDetail() {
       </Card>
 
       {/* Modals */}
+      <EditConsumableModal
+        open={showEdit}
+        consumable={consumable}
+        onClose={() => setShowEdit(false)}
+        onSuccess={() => { setShowEdit(false); qc.invalidateQueries(['consumable', id]); qc.invalidateQueries(['consumables']); }}
+      />
       {hasRole('ops_manager') && (
-        <>
-          <EditConsumableModal
-            open={showEdit}
-            consumable={consumable}
-            onClose={() => setShowEdit(false)}
-            onSuccess={() => { setShowEdit(false); qc.invalidateQueries(['consumable', id]); qc.invalidateQueries(['consumables']); }}
-          />
-          <StockAdjustModal
-            open={showAdjust}
-            consumable={consumable}
-            onClose={() => setShowAdjust(false)}
-            onSuccess={() => { setShowAdjust(false); qc.invalidateQueries(['consumable', id]); qc.invalidateQueries(['consumables']); qc.invalidateQueries(['restock-flags']); }}
-          />
-        </>
+        <StockAdjustModal
+          open={showAdjust}
+          consumable={consumable}
+          onClose={() => setShowAdjust(false)}
+          onSuccess={() => { setShowAdjust(false); qc.invalidateQueries(['consumable', id]); qc.invalidateQueries(['consumables']); qc.invalidateQueries(['restock-flags']); }}
+        />
       )}
     </div>
   );
