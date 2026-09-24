@@ -46,14 +46,15 @@ function LeaveStatusBadge({ status }) {
    ============================================================ */
 export default function HRPage() {
   const [tab, setTab] = useState('board');
-  const { hasRole } = useAuth();
+  const { user, hasRole } = useAuth();
+  const canSeePwSchedule = hasRole('ops_manager') || user?.email === 'pw@metabolictrack.com';
 
   const tabs = [
     { id: 'board',    label: 'In / Out board' },
     { id: 'calendar', label: 'Team calendar' },
     { id: 'leave',    label: 'Time off requests' },
     { id: 'balances', label: 'Leave balances' },
-    ...(hasRole('ops_manager') ? [{ id: 'schedule', label: "Patricia's schedule" }] : []),
+    ...(canSeePwSchedule ? [{ id: 'schedule', label: "Patricia's schedule" }] : []),
   ];
 
   return (
@@ -74,7 +75,7 @@ export default function HRPage() {
       {tab === 'calendar' && <TeamCalendar />}
       {tab === 'leave'    && <LeaveRequests />}
       {tab === 'balances' && <LeaveBalances />}
-      {tab === 'schedule' && hasRole('ops_manager') && <PatriciaSchedule />}
+      {tab === 'schedule' && canSeePwSchedule && <PatriciaSchedule />}
     </div>
   );
 }

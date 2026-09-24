@@ -17,7 +17,7 @@ const NAV_ITEMS = [
   { to: '/budget',          label: 'Budget',           icon: '◈', roles: ['ops_manager','ceo'] },
   { to: '/kpi',             label: 'KPI tracking',     icon: '◉', roles: ['ops_manager','ceo'] },
   { to: '/reports',         label: 'Weekly reports',   icon: '◧', roles: null },
-  { to: '/hr',               label: 'HR portal',        icon: '♦', roles: ['ops_manager','ceo'] },
+  { to: '/hr',               label: 'HR portal',        icon: '♦', roles: null },
   { to: '/admin',            label: 'User management',  icon: '◉', roles: ['ops_manager'] },
 ];
 

@@ -129,7 +129,7 @@ function TasksMain() {
       <DelayProposalPanel />
       {isLoading ? <LoadingState /> : !tasks?.length ? (
         <EmptyState title="No tasks found"
-          action={hasRole('ops_manager') && (
+          action={hasRole('ops_manager', 'ceo') && (
             <Button variant="primary" onClick={() => setShowCreate(true)}>Create task</Button>
           )}
         />
@@ -220,7 +220,7 @@ function TaskList({ tasks, onRefresh }) {
                       </div>
                     </Td>
                     <Td>
-                      {hasRole('ops_manager') ? (
+                      {hasRole('ops_manager', 'ceo') ? (
                         <select
                           className="field-input status-select"
                           value={task.status}

@@ -376,7 +376,7 @@ function ProjectDetailModal({ project, onClose, onUpdate }) {
           </Badge>
           {project.client && <span style={{ fontSize:'0.8125rem', color:'var(--text-muted)' }}>Client: {project.client}</span>}
           <div style={{ marginLeft:'auto', display:'flex', gap:'0.5rem', flexWrap:'wrap' }}>
-            {hasRole('ops_manager', 'ceo') && (
+            {hasRole('ops_manager') && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setEditing(!editing)}>
                   {editing ? 'Cancel edit' : 'Edit'}
@@ -386,14 +386,14 @@ function ProjectDetailModal({ project, onClose, onUpdate }) {
                 </Button>
               </>
             )}
-            {hasRole('ops_manager', 'ceo') && project.is_active && (
+            {hasRole('ops_manager') && project.is_active && (
               <Button variant="secondary" size="sm"
                 loading={deactivateMutation.isPending}
                 onClick={() => deactivateMutation.mutate()}>
                 Deactivate
               </Button>
             )}
-            {hasRole('ops_manager', 'ceo') && !project.is_active && (
+            {hasRole('ops_manager') && !project.is_active && (
               <Button variant="primary" size="sm"
                 loading={reactivateMutation.isPending}
                 onClick={() => reactivateMutation.mutate()}>

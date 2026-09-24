@@ -38,11 +38,7 @@ function AppRoutes() {
         <Route path="consumables/*"     element={<ConsumablesPage />} />
         <Route path="daily-logs/*"      element={<DailyLogsPage />} />
         <Route path="tasks/*"           element={<TasksPage />} />
-        <Route path="hr/*"              element={
-          <RequireAuth roles={['ops_manager','ceo']}>
-            <HRPage />
-          </RequireAuth>
-        } />
+        <Route path="hr/*"              element={<HRPage />} />
         <Route path="budget/*"          element={
           <RequireAuth roles={['ops_manager','ceo']}>
             <BudgetPage />
