@@ -66,7 +66,7 @@ function DailyLogsList() {
   const { data: missing } = useQuery({
     queryKey: ['missing-logs'],
     queryFn: () => api.get('/daily-logs/missing').then(r => r.data),
-    enabled: hasRole('ops_manager', 'ceo'),
+    enabled: hasRole('ops_manager'),
   });
 
   return (
@@ -84,7 +84,7 @@ function DailyLogsList() {
       />
 
       <div className="stats-row">
-        {hasRole('ops_manager', 'ceo') && (
+        {hasRole('ops_manager') && (
           <StatCard label="Missing logs" value={missing?.length ?? '—'} sub="from yesterday" danger={missing?.length > 0} />
         )}
         <StatCard
@@ -102,7 +102,7 @@ function DailyLogsList() {
         </div>
       </Card>
 
-      {hasRole('ops_manager', 'ceo') && missing?.length > 0 && (
+      {hasRole('ops_manager') && missing?.length > 0 && (
         <Card className="missing-alert">
           <CardHeader title="Missing logs — yesterday" />
           <div className="missing-list">

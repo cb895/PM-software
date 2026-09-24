@@ -30,7 +30,14 @@ Last updated: September 3, 2026
 | Action | lab_tech | qm_director | ceo | ops_manager |
 |---|---|---|---|---|
 | View | ✅ | ✅ | ✅ | ✅ |
-| Missing logs alert | — | — | ✅ | ✅ |
+| Missing logs count (stat card only — via `GET /dashboard/stats`) | — | — | ✅ | ✅ |
+
+The Dashboard's "Missing logs" stat card shows a bare count to ceo and
+ops_manager, computed inline by `GET /dashboard/stats` (nulled out
+server-side for other roles). It does NOT show who is missing — that
+detail (names, via `GET /daily-logs/missing`) is ops_manager-only; see
+Daily Logs below. These are two different endpoints backing two
+different pieces of UI, not conflicting rules for the same feature.
 
 ### Purchase Orders
 | Action | lab_tech | qm_director | ceo | ops_manager |
@@ -69,7 +76,7 @@ through a PO receipt.
 |---|---|---|---|---|
 | Submit own log | ✅ | ✅ | ✅ | ✅ |
 | View all logs | ✅ | ✅ | ✅ | ✅ |
-| See missing log alerts | — | — | — | ✅ |
+| See who's missing a log (names, via `GET /daily-logs/missing`) | — | — | — | ✅ |
 
 Submitting a log is what moves live inventory: any consumables recorded
 against a project entry are decremented from `consumables.current_stock`

@@ -31,7 +31,7 @@ export default function Dashboard() {
   const { data: missingLogs } = useQuery({
     queryKey: ['dashboard-missing-logs'],
     queryFn: () => api.get('/daily-logs/missing').then(r => r.data),
-    enabled: hasRole('ops_manager', 'ceo'),
+    enabled: hasRole('ops_manager'),
   });
 
   const { data: budgetSummary } = useQuery({
