@@ -264,7 +264,8 @@ async def delete_project(
     """
     HARD DELETE — ops manager only.
     Permanently removes the project and ALL associated data:
-    tasks, daily log entries, budget entries, KPI actuals, PO links, phase records.
+    tasks, daily log entries, budget entries, KPI actuals, PO links, phase
+    records, and project-specific consumables (and their transaction history).
     This cannot be undone.
     Requires ?confirm=DELETE query parameter as a safety check.
     """
@@ -352,6 +353,19 @@ async def delete_project(
     # Weekly report sections
     await db.execute(text(
         "DELETE FROM weekly_report_sections WHERE project_id = :id"
+    ), {"id": project_id})
+    # Consumable transactions — both ones logged against this project (any
+    # consumable) and any transaction referencing a consumable that's about
+    # to be deleted below (a shared item used here could have transactions
+    # tagged with a different project_id, so consumable_id must be checked too)
+    await db.execute(text("""
+        DELETE FROM consumable_transactions
+        WHERE project_id = :id
+           OR consumable_id IN (SELECT id FROM consumables WHERE project_id = :id)
+    """), {"id": project_id})
+    # Project-specific consumables (NULL project_id = shared, untouched)
+    await db.execute(text(
+        "DELETE FROM consumables WHERE project_id = :id"
     ), {"id": project_id})
     # Project phases
     await db.execute(text(
