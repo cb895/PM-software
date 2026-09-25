@@ -7,12 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime, timedelta, timezone
 
 from core.database import get_db
 from core.security import verify_password, hash_password, create_access_token, get_current_user
 from models.user   import User
 
 router = APIRouter()
+
+# Brute-force protection: lock an account for LOCKOUT_MINUTES after
+# MAX_FAILED_ATTEMPTS consecutive wrong passwords.
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES      = 15
 
 
 class Token(BaseModel):
@@ -40,12 +46,32 @@ async def login(
     )
     user = result.scalar_one_or_none()
 
+    now = datetime.now(timezone.utc)
+    if user and user.locked_until and user.locked_until > now:
+        wait_minutes = max(1, int((user.locked_until - now).total_seconds() // 60) + 1)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Too many failed login attempts. Try again in {wait_minutes} minute(s).",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     if not user or not verify_password(form.password, user.hashed_password):
+        if user:
+            user.failed_login_count += 1
+            if user.failed_login_count >= MAX_FAILED_ATTEMPTS:
+                user.locked_until = now + timedelta(minutes=LOCKOUT_MINUTES)
+                user.failed_login_count = 0
+            await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if user.failed_login_count or user.locked_until:
+        user.failed_login_count = 0
+        user.locked_until = None
+        await db.commit()
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
     return Token(access_token=token)

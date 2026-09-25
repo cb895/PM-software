@@ -100,6 +100,8 @@ CREATE TABLE users (
     hashed_password     TEXT            NOT NULL,
     role                user_role       NOT NULL,
     is_active           BOOLEAN         NOT NULL DEFAULT TRUE,
+    failed_login_count  INTEGER         NOT NULL DEFAULT 0,
+    locked_until        TIMESTAMPTZ,               -- login blocked until this time, if set
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
