@@ -749,12 +749,14 @@ function EditTaskModal({ task, onClose, onSuccess }) {
    ============================================================ */
 function DelayProposalPanel() {
   const qc = useQueryClient();
+  const { hasRole } = useAuth();
   const [reviewNotes, setReviewNotes] = useState({});
 
   const { data: proposals } = useQuery({
     queryKey: ['delay-proposals'],
     queryFn: () => api.get('/tasks/delay-proposals?status=pending').then(r => r.data),
     refetchInterval: 60000,
+    enabled: hasRole('ops_manager', 'ceo'),
   });
 
   const approveMutation = useMutation({
