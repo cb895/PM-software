@@ -313,17 +313,20 @@ async def delete_project(
         DELETE FROM task_assignees
         WHERE task_id IN (SELECT id FROM tasks WHERE project_id = :id)
     """), {"id": project_id})
+    # Daily log entry tasks — task_id has no ON DELETE CASCADE to tasks(id),
+    # so this must run before "Tasks" below or that DELETE 500s with a
+    # ForeignKeyViolation on any project with logged task updates (the
+    # log_entry_id side does cascade, but a task can outlive its own log
+    # entry, so both directions are checked here).
+    await db.execute(text("""
+        DELETE FROM daily_log_entry_tasks
+        WHERE task_id IN (SELECT id FROM tasks WHERE project_id = :id)
+           OR log_entry_id IN (SELECT id FROM daily_log_entries WHERE project_id = :id)
+    """), {"id": project_id})
     # Tasks
     await db.execute(text(
         "DELETE FROM tasks WHERE project_id = :id"
     ), {"id": project_id})
-    # Daily log entry tasks + consumable usage (entries reference projects)
-    await db.execute(text("""
-        DELETE FROM daily_log_entry_tasks
-        WHERE log_entry_id IN (
-            SELECT id FROM daily_log_entries WHERE project_id = :id
-        )
-    """), {"id": project_id})
     await db.execute(text("""
         DELETE FROM consumable_daily_usage_items
         WHERE usage_id IN (
@@ -341,12 +344,23 @@ async def delete_project(
     await db.execute(text(
         "DELETE FROM daily_log_entries WHERE project_id = :id"
     ), {"id": project_id})
+    # PO receipts — line_item_id has no ON DELETE CASCADE to po_line_items(id)
+    # (po_receipts.po_id does cascade from purchase_orders, but that doesn't
+    # help here since po_line_items is deleted independently, below, and
+    # first). Must run before "PO line items".
+    await db.execute(text("""
+        DELETE FROM po_receipts
+        WHERE line_item_id IN (
+            SELECT id FROM po_line_items
+            WHERE po_id IN (SELECT id FROM purchase_orders WHERE project_id = :id)
+        )
+    """), {"id": project_id})
     # PO line items for POs linked to this project
     await db.execute(text("""
         DELETE FROM po_line_items
         WHERE po_id IN (SELECT id FROM purchase_orders WHERE project_id = :id)
     """), {"id": project_id})
-    # POs
+    # POs (po_receipts.po_id and po_attachments.po_id both cascade from here)
     await db.execute(text(
         "DELETE FROM purchase_orders WHERE project_id = :id"
     ), {"id": project_id})
@@ -362,6 +376,16 @@ async def delete_project(
         DELETE FROM consumable_transactions
         WHERE project_id = :id
            OR consumable_id IN (SELECT id FROM consumables WHERE project_id = :id)
+    """), {"id": project_id})
+    # Daily-log usage of a consumable owned by this project, logged from
+    # ANY project's daily log — consumable_daily_usage_items.consumable_id
+    # is deliberately unrestricted (techs can select any active consumable
+    # regardless of which project owns it) and has no ON DELETE CASCADE, so
+    # this can't rely on the project-scoped usage cleanup earlier, which
+    # only covers usage logged from THIS project's own entries.
+    await db.execute(text("""
+        DELETE FROM consumable_daily_usage_items
+        WHERE consumable_id IN (SELECT id FROM consumables WHERE project_id = :id)
     """), {"id": project_id})
     # Project-specific consumables (NULL project_id = shared, untouched)
     await db.execute(text(
