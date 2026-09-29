@@ -188,6 +188,25 @@ async def submit_leave_request(
 
     # For vacation: check balance
     if body.leave_type == 'vacation':
+        # No leave_balances row exists yet for this year (nothing rolls them
+        # over automatically — the seed data only covers the year it shipped
+        # with) — provision one now so a new calendar year doesn't silently
+        # block every employee's first request. Carries forward the user's
+        # most recent pto_total, or the schema default if this is their
+        # first year, so ops_manager can adjust it after the fact via the
+        # existing "Edit leave balances" screen rather than everyone being
+        # stuck at zero.
+        await db.execute(text("""
+            INSERT INTO leave_balances (user_id, year, pto_total, pto_used, pto_pending)
+            SELECT :uid, :yr, COALESCE(
+                (SELECT pto_total FROM leave_balances WHERE user_id = :uid ORDER BY year DESC LIMIT 1),
+                15
+            ), 0, 0
+            WHERE NOT EXISTS (
+                SELECT 1 FROM leave_balances WHERE user_id = :uid AND year = :yr
+            )
+        """), {"uid": user.id, "yr": body.start_date.year})
+
         bal = await db.execute(text("""
             SELECT pto_total - pto_used - pto_pending AS available
             FROM leave_balances
@@ -384,7 +403,7 @@ async def cancel_leave_request(
 
 @router.get("/balances")
 async def get_balances(
-    year: int = Query(2026),
+    year: int = Query(default_factory=lambda: date.today().year),
     db   = Depends(get_db),
     user = Depends(get_current_user),
 ):
@@ -409,18 +428,29 @@ async def get_balances(
 async def update_balance(
     user_id: int,
     body:    BalanceUpdate,
-    year:    int = Query(2026),
+    year:    int = Query(default_factory=lambda: date.today().year),
     db       = Depends(get_db),
     user     = Depends(require_roles("ops_manager")),
 ):
-    data = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not data:
+    if body.pto_total is None and body.pto_used is None:
         raise HTTPException(400, "No fields to update.")
-    set_clause = ", ".join(f"{k} = :{k}" for k in data)
-    data.update({"user_id": user_id, "year": year})
-    await db.execute(text(
-        f"UPDATE leave_balances SET {set_clause}, updated_at = NOW() WHERE user_id = :user_id AND year = :year"
-    ), data)
+    # Upsert: a plain UPDATE silently no-ops (with a false "Balance updated."
+    # success message) if this employee has no leave_balances row for `year`
+    # yet — the normal case for setting up a brand new year's allocation
+    # before anyone has made their first request against it.
+    await db.execute(text("""
+        INSERT INTO leave_balances (user_id, year, pto_total, pto_used, pto_pending, updated_at)
+        VALUES (:user_id, :year, COALESCE(:pto_total, 15), COALESCE(:pto_used, 0), 0, NOW())
+        ON CONFLICT (user_id, year) DO UPDATE SET
+            pto_total  = COALESCE(:pto_total, leave_balances.pto_total),
+            pto_used   = COALESCE(:pto_used, leave_balances.pto_used),
+            updated_at = NOW()
+    """), {
+        "user_id":   user_id,
+        "year":      year,
+        "pto_total": body.pto_total,
+        "pto_used":  body.pto_used,
+    })
     await db.commit()
     return {"message": "Balance updated."}
 

@@ -710,11 +710,11 @@ function LeaveBalances() {
 
   const { data: balances, isLoading } = useQuery({
     queryKey: ['leave-balances'],
-    queryFn: () => api.get('/hr/balances?year=2026').then(r => r.data),
+    queryFn: () => api.get('/hr/balances').then(r => r.data),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ userId, pto_total }) => api.patch(`/hr/balances/${userId}?year=2026`, { pto_total }),
+    mutationFn: ({ userId, pto_total }) => api.patch(`/hr/balances/${userId}`, { pto_total }),
     onSuccess: () => { toast.success('Balance updated.'); setEditTarget(null); qc.invalidateQueries(['leave-balances']); },
     onError: () => toast.error('Failed to update balance.'),
   });
