@@ -589,6 +589,9 @@ async def get_pw_schedule(
     user = Depends(get_current_user),
 ):
     """Get Patricia's schedule overrides for the next 12 weeks."""
+    if user.role != "ops_manager" and user.email != "pw@metabolictrack.com":
+        raise HTTPException(403, "Only Patricia or the ops manager can view this schedule.")
+
     result = await db.execute(text("""
         SELECT wo.*, u_set.full_name AS set_by_name
         FROM work_schedule_overrides wo

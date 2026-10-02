@@ -38,7 +38,12 @@ class POCreate(BaseModel):
     urgency:            str = "normal"
     notes:              Optional[str]  = None
     expected_delivery:  Optional[date] = None
+    placed_date:        Optional[date] = None
     items:              List[LineItemIn]
+
+
+class PlacedDateIn(BaseModel):
+    placed_date: date
 
 
 class RejectIn(BaseModel):
@@ -150,10 +155,11 @@ async def create_purchase_order(
     result = await db.execute(text("""
         INSERT INTO purchase_orders
             (project_id, supplier_id, supplier_name_free, requested_by, is_overhead,
-             priority, risk_level, urgency, notes, expected_delivery, status)
+             priority, risk_level, urgency, notes, expected_delivery, placed_date, status)
         VALUES
             (:project_id, :supplier_id, :supplier_name_free, :requested_by, :is_overhead,
-             :priority, :risk_level, :urgency, :notes, :expected_delivery, 'pending')
+             :priority, :risk_level, :urgency, :notes, :expected_delivery,
+             COALESCE(:placed_date, CURRENT_DATE), 'pending')
         RETURNING id
     """), {
         "project_id":         body.project_id,
@@ -166,6 +172,7 @@ async def create_purchase_order(
         "urgency":            body.urgency,
         "notes":              body.notes,
         "expected_delivery":  body.expected_delivery,
+        "placed_date":        body.placed_date,
     })
     po_id = result.scalar_one()
 
@@ -429,6 +436,32 @@ async def receive_po(
 
     await db.commit()
     return {"message": "Receipt recorded.", "fully_received": fully_received}
+
+
+@router.patch("/{po_id}/date")
+async def update_po_placed_date(
+    po_id: int,
+    body:  PlacedDateIn,
+    db     = Depends(get_db),
+    user   = Depends(require_po_approver),
+):
+    """
+    Correct the order date on an existing PO — for back-logging an order that
+    was actually placed earlier but is only now being entered into the system.
+    """
+    result = await db.execute(text(
+        "SELECT id FROM purchase_orders WHERE id = :id"
+    ), {"id": po_id})
+    if not result.one_or_none():
+        raise HTTPException(404, "Purchase order not found.")
+
+    await db.execute(text("""
+        UPDATE purchase_orders SET placed_date = :placed_date, updated_at = NOW()
+        WHERE id = :id
+    """), {"placed_date": body.placed_date, "id": po_id})
+
+    await db.commit()
+    return {"message": "Order date updated."}
 
 
 @router.patch("/{po_id}/status")

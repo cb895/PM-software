@@ -148,7 +148,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({
     project_id: '', is_overhead: false, supplier_id: '', supplier_name_free: '',
-    priority: 'normal', risk_level: '', urgency: 'normal', notes: '',
+    priority: 'normal', risk_level: '', urgency: 'normal', notes: '', placed_date: '',
     items: [{ description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '', consumable_id: '' }],
   });
 
@@ -208,6 +208,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
       urgency:            form.urgency  || 'normal',
       notes:              form.notes    || null,
       expected_delivery:  form.expected_delivery || null,
+      placed_date:        form.placed_date || null,
       items: form.items.map(it => ({
         description:        it.description,
         product_id:         it.product_id        || null,
@@ -278,6 +279,14 @@ function CreatePOModal({ open, onClose, onSuccess }) {
             </select>
           </div>
         </div>
+
+        <Input
+          label="Order date"
+          type="date"
+          value={form.placed_date}
+          onChange={e => setField('placed_date', e.target.value)}
+          hint="Leave blank to use today's date — only set this when back-logging an order placed earlier that wasn't entered at the time."
+        />
 
         {/* Line items */}
         <div className="line-items-section">
@@ -399,6 +408,7 @@ function PODetail() {
   });
 
   const [showReceive, setShowReceive] = useState(false);
+  const [showEditDate, setShowEditDate] = useState(false);
 
   if (isLoading) return <LoadingState />;
   if (!po) return <EmptyState title="PO not found" action={<Button onClick={() => navigate('/purchase-orders')}>Back</Button>} />;
@@ -446,7 +456,18 @@ function PODetail() {
             <div className="meta-item"><span className="meta-label">Requested by</span><span>{po.requested_by}</span></div>
             <div className="meta-item"><span className="meta-label">Approved by</span><span>{po.approved_by || '—'}</span></div>
             <div className="meta-item"><span className="meta-label">Receiver</span><span>{po.receiver || '—'}</span></div>
-            <div className="meta-item"><span className="meta-label">Order date</span><span>{formatDate(po.placed_date)}</span></div>
+            <div className="meta-item">
+              <span className="meta-label">Order date</span>
+              <span>
+                {formatDate(po.placed_date)}
+                {hasRole('ops_manager', 'ceo', 'qm_director') && (
+                  <button type="button" className="item-link" style={{ marginLeft: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    onClick={() => setShowEditDate(true)}>
+                    edit
+                  </button>
+                )}
+              </span>
+            </div>
             <div className="meta-item"><span className="meta-label">Expected</span><span>{formatDate(po.expected_delivery)}</span></div>
             <div className="meta-item"><span className="meta-label">Received</span><span>{formatDate(po.received_date)}</span></div>
           </div>
@@ -532,7 +553,56 @@ function PODetail() {
         onClose={() => setShowReceive(false)}
         onSuccess={() => { setShowReceive(false); qc.invalidateQueries(['purchase-order', id]); qc.invalidateQueries(['consumables']); }}
       />
+
+      <EditDateModal
+        open={showEditDate}
+        po={po}
+        onClose={() => setShowEditDate(false)}
+        onSuccess={() => { setShowEditDate(false); qc.invalidateQueries(['purchase-order', id]); }}
+      />
     </div>
+  );
+}
+
+/* ---- Edit order date modal (back-logging) ---- */
+function EditDateModal({ open, po, onClose, onSuccess }) {
+  const [placedDate, setPlacedDate] = useState('');
+
+  useEffect(() => {
+    if (open) setPlacedDate(po?.placed_date ? po.placed_date.slice(0, 10) : '');
+  }, [open, po?.id]);
+
+  const mutation = useMutation({
+    mutationFn: () => api.patch(`/purchase-orders/${po.id}/date`, { placed_date: placedDate }),
+    onSuccess: () => { toast.success('Order date updated.'); onSuccess(); },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to update order date.'),
+  });
+
+  const handleSubmit = e => {
+    e.preventDefault();
+    if (!placedDate) { toast.error('Select a date.'); return; }
+    mutation.mutate();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Edit order date" size="sm">
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+          Use this to back-log an order that was actually placed earlier but
+          wasn't entered into the system at the time.
+        </p>
+        <Input
+          label="Order date"
+          type="date"
+          value={placedDate}
+          onChange={e => setPlacedDate(e.target.value)}
+        />
+        <div className="modal-footer">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={mutation.isPending}>Save</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
