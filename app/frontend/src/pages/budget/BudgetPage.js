@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -494,9 +494,9 @@ function BudgetOverview() {
    Set Budget Modal
    ============================================================ */
 function SetBudgetModal({ project, onClose, onSuccess }) {
-  const [budget,    setBudget]    = useState('');
-  const [rate,      setRate]      = useState('');
-  const [threshold, setThreshold] = useState('80');
+  const [budget,    setBudget]    = useState(project?.budget_allocated ? String(project.budget_allocated) : '');
+  const [rate,      setRate]      = useState(project?.hourly_rate ? String(project.hourly_rate) : '');
+  const [threshold, setThreshold] = useState(project?.budget_alert_threshold ? String(project.budget_alert_threshold) : '80');
 
   const mutation = useMutation({
     mutationFn: data => api.patch(`/budget/projects/${project.project_id}`, data),
@@ -533,6 +533,219 @@ function SetBudgetModal({ project, onClose, onSuccess }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+/* ============================================================
+   Set Phase Budget Modal
+   ============================================================ */
+function SetPhaseBudgetModal({ phase, onClose, onSuccess }) {
+  const [budget,    setBudget]    = useState(phase?.budget_allocated ? String(phase.budget_allocated) : '');
+  const [rate,      setRate]      = useState(phase?.hourly_rate ? String(phase.hourly_rate) : '');
+  const [threshold, setThreshold] = useState(phase?.budget_alert_threshold ? String(phase.budget_alert_threshold) : '80');
+
+  const mutation = useMutation({
+    mutationFn: data => api.patch(`/budget/phases/${phase.phase_id}`, data),
+    onSuccess:  ()   => { toast.success('Phase budget updated.'); onSuccess(); },
+    onError:    err  => toast.error(err.response?.data?.detail || 'Failed to update phase budget.'),
+  });
+
+  const handleSubmit = e => {
+    e.preventDefault();
+    if (!budget) { toast.error('Enter a budget amount.'); return; }
+    mutation.mutate({
+      budget_allocated:       parseFloat(budget),
+      hourly_rate:            rate ? parseFloat(rate) : undefined,
+      budget_alert_threshold: parseFloat(threshold) || 80,
+    });
+  };
+
+  return (
+    <Modal open={true} onClose={onClose} title={`Edit phase budget — ${phase?.phase_name}`} size="sm">
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <Input label="Phase budget ($) *" type="number" min="0" step="0.01"
+          value={budget} onChange={e => setBudget(e.target.value)}
+          placeholder="e.g. 40000" />
+        <Input label="Hourly labour rate ($/hr)" type="number" min="0" step="0.01"
+          value={rate} onChange={e => setRate(e.target.value)}
+          placeholder="Leave blank to use the project's rate"
+          hint="Overrides the project's rate for labour logged against this phase" />
+        <Input label="Alert threshold (%)" type="number" min="1" max="100"
+          value={threshold} onChange={e => setThreshold(e.target.value)}
+          hint="Send alert when spend reaches this % of the phase budget" />
+        <div className="modal-footer">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={mutation.isPending}>Save</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ============================================================
+   Project Budget Detail
+   ============================================================ */
+function BudgetDetail() {
+  const { id }       = useParams();
+  const { hasRole }  = useAuth();
+  const navigate     = useNavigate();
+  const qc           = useQueryClient();
+
+  const [showEditProject, setShowEditProject] = useState(false);
+  const [editPhase,       setEditPhase]       = useState(null);
+
+  const canEdit = hasRole('ops_manager', 'ceo');
+
+  const { data: detail, isLoading } = useQuery({
+    queryKey: ['budget-detail', id],
+    queryFn:  () => api.get(`/budget/projects/${id}`).then(r => r.data),
+  });
+
+  const invalidateAll = () => {
+    qc.invalidateQueries(['budget-detail', id]);
+    qc.invalidateQueries(['budget-summary']);
+    qc.invalidateQueries(['phase-summary']);
+  };
+
+  if (isLoading) return <LoadingState />;
+  if (!detail) {
+    return (
+      <EmptyState title="Project not found"
+        action={<Button onClick={() => navigate('/budget')}>← Back to budget</Button>} />
+    );
+  }
+
+  return (
+    <div>
+      <PageHeader
+        title={detail.project_code}
+        subtitle={detail.project_name}
+        action={
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <Button variant="secondary" onClick={() => navigate('/budget')}>← Back</Button>
+            {canEdit && (
+              <Button variant="primary" onClick={() => setShowEditProject(true)}>
+                Edit budget
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      <div className="stats-row">
+        <StatCard label="Allocated" value={formatCurrency(detail.budget_allocated)} />
+        <StatCard label="Spent" value={formatCurrency(detail.total_spent)}
+          warning={detail.budget_allocated > 0 && detail.pct_spent / 100 > 0.8} />
+        <StatCard label="Remaining" value={formatCurrency(detail.budget_remaining)}
+          accent={detail.budget_remaining > 0} danger={detail.budget_remaining < 0} />
+        <StatCard label="% used" value={`${parseFloat(detail.pct_spent || 0).toFixed(1)}%`}
+          danger={detail.alert_triggered} />
+      </div>
+
+      <Card style={{ marginBottom: '1.25rem' }}>
+        <CardHeader title="Spend breakdown" />
+        <ProgressBar value={detail.pct_spent || 0}
+          warning={detail.budget_alert_threshold || 80} danger={100} />
+        <div className="pbcard-breakdown" style={{ marginTop: '0.75rem' }}>
+          <div className="breakdown-item">
+            <span className="breakdown-dot" style={{ background: 'var(--accent)' }} />
+            <span className="breakdown-label">Labour</span>
+            <span className="breakdown-val">{formatCurrency(detail.labour_cost)}</span>
+          </div>
+          <div className="breakdown-item">
+            <span className="breakdown-dot" style={{ background: 'var(--info)' }} />
+            <span className="breakdown-label">Consumables</span>
+            <span className="breakdown-val">{formatCurrency(detail.consumable_cost)}</span>
+          </div>
+          <div className="breakdown-item">
+            <span className="breakdown-dot" style={{ background: 'var(--warning)' }} />
+            <span className="breakdown-label">POs</span>
+            <span className="breakdown-val">{formatCurrency(detail.po_cost)}</span>
+          </div>
+        </div>
+      </Card>
+
+      <Card style={{ marginBottom: '1.25rem' }}>
+        <CardHeader title="Phases" />
+        {!detail.phases?.length ? (
+          <EmptyState title="No phases for this project" />
+        ) : (
+          detail.phases.map(ph => (
+            <div key={ph.phase_id} className="phase-row">
+              <div className="phase-name">
+                <span>{ph.phase_name}</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className="phase-pct">{parseFloat(ph.pct_spent || 0).toFixed(0)}%</span>
+                  {canEdit && (
+                    <Button variant="ghost" size="sm" onClick={() => setEditPhase(ph)}>Edit</Button>
+                  )}
+                </span>
+              </div>
+              <ProgressBar value={ph.pct_spent || 0}
+                warning={ph.budget_alert_threshold || 80} danger={100} />
+              <div className="phase-amounts">
+                <span>{formatCurrency(ph.total_spent)}</span>
+                <span style={{ color: 'var(--text-muted)' }}>/ {formatCurrency(ph.budget_allocated)}</span>
+              </div>
+            </div>
+          ))
+        )}
+      </Card>
+
+      <Card>
+        <CardHeader title="Budget entries" subtitle="Auto-posted from daily logs, invoices, and consumable usage" />
+        {!detail.entries?.length ? (
+          <EmptyState title="No entries yet" />
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Date</Th>
+                <Th>Phase</Th>
+                <Th>Type</Th>
+                <Th>Description</Th>
+                <Th>Amount</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.entries.map(e => (
+                <tr key={e.id}>
+                  <Td>{formatDate(e.entry_date)}</Td>
+                  <Td>{e.phase_name || '—'}</Td>
+                  <Td>
+                    <span className="entry-type-dot"
+                      style={{ background: ENTRY_COLORS[e.entry_type] || 'var(--text-muted)' }} />
+                    <span style={{ fontSize: '0.8125rem', textTransform: 'capitalize' }}>
+                      {e.entry_type?.replace(/_/g, ' ')}
+                    </span>
+                  </Td>
+                  <Td style={{ maxWidth: '280px' }}>
+                    <span className="entry-desc">{e.description || '—'}</span>
+                  </Td>
+                  <Td><span className="entry-amount">{formatCurrency(e.amount)}</span></Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+
+      {showEditProject && (
+        <SetBudgetModal
+          project={detail}
+          onClose={() => setShowEditProject(false)}
+          onSuccess={() => { setShowEditProject(false); invalidateAll(); }}
+        />
+      )}
+
+      {editPhase && (
+        <SetPhaseBudgetModal
+          phase={editPhase}
+          onClose={() => setEditPhase(null)}
+          onSuccess={() => { setEditPhase(null); invalidateAll(); }}
+        />
+      )}
+    </div>
   );
 }
 
@@ -637,6 +850,7 @@ export default function BudgetPage() {
   return (
     <Routes>
       <Route index element={<BudgetOverview />} />
+      <Route path=":id" element={<BudgetDetail />} />
     </Routes>
   );
 }
