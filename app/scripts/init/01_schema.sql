@@ -367,6 +367,8 @@ CREATE TABLE missing_log_flags (
     flagged_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     resolved            BOOLEAN         NOT NULL DEFAULT FALSE,
     resolved_at         TIMESTAMPTZ,
+    resolved_by         INTEGER         REFERENCES users(id),      -- ops manager who excused it
+    resolve_reason      TEXT,
     UNIQUE (user_id, missing_date)
 );
 

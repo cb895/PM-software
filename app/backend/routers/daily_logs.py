@@ -77,16 +77,47 @@ async def list_logs(
     """), params)
     return [dict(r) for r in result.mappings()]
 
+class ExcuseIn(BaseModel):
+    reason: Optional[str] = None
+
+
 @router.get("/missing")
 async def missing_logs(db = Depends(get_db), user = Depends(require_roles("ops_manager"))):
+    # Every unresolved flag, not just yesterday's — the cron job adds a new
+    # row each weekday for whoever's still missing a log, so without this
+    # anything not excused within a day silently fell off the list while
+    # staying unresolved (and un-excusable) in the table forever.
     result = await db.execute(text("""
-        SELECT u.id, u.full_name, mlf.missing_date
+        SELECT mlf.id AS flag_id, u.id AS user_id, u.full_name, mlf.missing_date
         FROM missing_log_flags mlf
         JOIN users u ON u.id = mlf.user_id
-        WHERE mlf.resolved = FALSE AND mlf.missing_date = CURRENT_DATE - 1
-        ORDER BY u.full_name
+        WHERE mlf.resolved = FALSE
+        ORDER BY mlf.missing_date, u.full_name
     """))
     return [dict(r) for r in result.mappings()]
+
+
+@router.post("/missing/{flag_id}/excuse")
+async def excuse_missing_log(
+    flag_id: int,
+    body:    ExcuseIn,
+    db       = Depends(get_db),
+    user     = Depends(require_roles("ops_manager")),
+):
+    """Excuse a flagged missing log — e.g. the employee was on approved leave
+    that day — removing it from the missing-logs queue without requiring a
+    backfilled log entry."""
+    result = await db.execute(text("""
+        UPDATE missing_log_flags
+        SET resolved = TRUE, resolved_at = NOW(), resolved_by = :uid, resolve_reason = :reason
+        WHERE id = :flag_id AND resolved = FALSE
+        RETURNING id
+    """), {"flag_id": flag_id, "uid": user.id, "reason": body.reason})
+    if not result.one_or_none():
+        raise HTTPException(404, "Missing-log flag not found or already resolved.")
+
+    await db.commit()
+    return {"message": "Missing log excused."}
 
 @router.post("/today/entries")
 async def add_log_entry(body: LogEntryIn, db = Depends(get_db), user = Depends(get_current_user)):

@@ -28,8 +28,7 @@ async def dashboard_stats(
             (SELECT COUNT(*) FROM projects
              WHERE is_active = TRUE) AS active_projects,
             (SELECT COUNT(*) FROM missing_log_flags
-             WHERE resolved = FALSE
-               AND missing_date = CURRENT_DATE - 1) AS missing_logs
+             WHERE resolved = FALSE) AS missing_logs
     """))
     row = dict(result.mappings().one())
     # Missing-logs alert is ops_manager/ceo only per PERMISSIONS.md.

@@ -1,17 +1,19 @@
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import {
-  PageHeader, StatCard, Card, CardHeader,
+  PageHeader, StatCard, Card, CardHeader, Button,
   POStatusBadge, Badge, LoadingState, EmptyState, ProgressBar
 } from '../../components/ui/UI';
 import { formatDate, formatCurrency } from '../../utils/format';
+import toast from 'react-hot-toast';
 import './Dashboard.css';
 
 export default function Dashboard() {
   const { user, hasRole } = useAuth();
+  const qc = useQueryClient();
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['dashboard-stats'],
@@ -32,6 +34,16 @@ export default function Dashboard() {
     queryKey: ['dashboard-missing-logs'],
     queryFn: () => api.get('/daily-logs/missing').then(r => r.data),
     enabled: hasRole('ops_manager'),
+  });
+
+  const excuseMutation = useMutation({
+    mutationFn: flagId => api.post(`/daily-logs/missing/${flagId}/excuse`, {}),
+    onSuccess: () => {
+      toast.success('Missing log excused.');
+      qc.invalidateQueries(['dashboard-missing-logs']);
+      qc.invalidateQueries(['dashboard-stats']);
+    },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to excuse.'),
   });
 
   const { data: budgetSummary } = useQuery({
@@ -204,15 +216,24 @@ export default function Dashboard() {
       {/* Missing logs — ops only */}
         {hasRole('ops_manager') && (
           <Card className="dashboard-card">
-            <CardHeader title="Missing logs — yesterday" />
+            <CardHeader title="Missing logs" />
             {!missingLogs?.length ? (
               <EmptyState title="All logs submitted" />
             ) : (
               <div className="missing-list">
                 {missingLogs.map(m => (
-                  <div key={m.id} className="missing-row">
-                    <span className="missing-name">{m.full_name}</span>
-                    <Badge variant="danger">Not submitted</Badge>
+                  <div key={m.flag_id} className="missing-row">
+                    <span className="missing-name">{m.full_name} — {formatDate(m.missing_date)}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Badge variant="danger">Not submitted</Badge>
+                      <Button
+                        variant="ghost" size="sm"
+                        loading={excuseMutation.isPending && excuseMutation.variables === m.flag_id}
+                        onClick={() => excuseMutation.mutate(m.flag_id)}
+                      >
+                        Excuse
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
