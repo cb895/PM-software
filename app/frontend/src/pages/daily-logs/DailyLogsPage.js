@@ -30,6 +30,7 @@ function createBlankEntry() {
 function DailyLogsList() {
   const { hasRole } = useAuth();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const today = new Date().toISOString().split('T')[0];
   const [dateFilter,    setDateFilter]    = useState('');
   const [projectFilter, setProjectFilter] = useState('');
@@ -60,7 +61,7 @@ function DailyLogsList() {
   const { data: todayLog } = useQuery({
     queryKey: ['my-log-today'],
     queryFn: () => api.get('/daily-logs/today').then(r => r.data),
-    enabled: hasRole('lab_tech'),
+    enabled: hasRole('lab_tech', 'qm_director'),
   });
 
   const { data: missing } = useQuery({
@@ -69,13 +70,23 @@ function DailyLogsList() {
     enabled: hasRole('ops_manager'),
   });
 
+  const excuseMutation = useMutation({
+    mutationFn: flagId => api.post(`/daily-logs/missing/${flagId}/excuse`, {}),
+    onSuccess: () => {
+      toast.success('Missing log excused.');
+      qc.invalidateQueries(['missing-logs']);
+      qc.invalidateQueries(['dashboard-stats']);
+    },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to excuse.'),
+  });
+
   return (
     <div>
       <PageHeader
         title="Daily logs"
         subtitle="Track daily progress, hours, and consumable usage per project"
         action={
-          hasRole('lab_tech') && (
+          hasRole('lab_tech', 'qm_director') && (
             <Button variant="primary" onClick={() => navigate('/daily-logs/today')}>
               {todayLog?.submitted_at ? "View today's log" : '+ Log today'}
             </Button>
@@ -85,7 +96,7 @@ function DailyLogsList() {
 
       <div className="stats-row">
         {hasRole('ops_manager') && (
-          <StatCard label="Missing logs" value={missing?.length ?? '—'} sub="from yesterday" danger={missing?.length > 0} />
+          <StatCard label="Missing logs" value={missing?.length ?? '—'} sub="unresolved" danger={missing?.length > 0} />
         )}
         <StatCard
           label="Logs today"
@@ -104,12 +115,21 @@ function DailyLogsList() {
 
       {hasRole('ops_manager') && missing?.length > 0 && (
         <Card className="missing-alert">
-          <CardHeader title="Missing logs — yesterday" />
+          <CardHeader title="Missing logs" />
           <div className="missing-list">
             {missing.map(m => (
-              <div key={m.id} className="missing-row">
-                <span className="missing-name">{m.full_name}</span>
-                <Badge variant="danger">Not submitted</Badge>
+              <div key={m.flag_id} className="missing-row">
+                <span className="missing-name">{m.full_name} — {formatDate(m.missing_date)}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Badge variant="danger">Not submitted</Badge>
+                  <Button
+                    variant="ghost" size="sm"
+                    loading={excuseMutation.isPending && excuseMutation.variables === m.flag_id}
+                    onClick={() => excuseMutation.mutate(m.flag_id)}
+                  >
+                    Excuse
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

@@ -37,3 +37,17 @@ export function truncate(str, n = 40) {
   if (!str) return '';
   return str.length > n ? str.slice(0, n) + '…' : str;
 }
+
+// FastAPI returns `detail` as a plain string for a raised HTTPException, but
+// as an array of {type, loc, msg, ...} objects for a Pydantic validation
+// error (422) — passing that array straight into a toast crashes React
+// ("objects are not valid as a child"). This normalizes either shape to text.
+export function formatApiError(err, fallback = 'Something went wrong.') {
+  const detail = err?.response?.data?.detail;
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+  }
+  return fallback;
+}

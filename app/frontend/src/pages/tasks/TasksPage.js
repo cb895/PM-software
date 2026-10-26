@@ -8,9 +8,11 @@ import {
   EmptyState, LoadingState, Modal, Input, Textarea,
   StatCard, PriorityBadge
 } from '../../components/ui/UI';
-import { formatDate } from '../../utils/format';
+import { formatDate, formatApiError } from '../../utils/format';
 import toast from 'react-hot-toast';
 import './TasksPage.css';
+
+const ASSIGNABLE_ROLES = ['lab_tech', 'qm_director'];
 
 /* ---- Status helpers ---- */
 function StatusBadge({ status }) {
@@ -561,7 +563,7 @@ function CreateTaskModal({ open, projects, onClose, onSuccess }) {
   const mutation = useMutation({
     mutationFn: data => api.post('/tasks', data),
     onSuccess: () => { toast.success('Task created.'); onSuccess(); },
-    onError: err => toast.error(err.response?.data?.detail || 'Failed to create task.'),
+    onError: err => toast.error(formatApiError(err, 'Failed to create task.')),
   });
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -577,6 +579,8 @@ function CreateTaskModal({ open, projects, onClose, onSuccess }) {
       project_id:     parseInt(form.project_id),
       parent_task_id: form.parent_task_id ? parseInt(form.parent_task_id) : null,
       assignee_ids:   form.assignee_ids.map(Number),
+      planned_start:  form.planned_start || null,
+      planned_end:    form.planned_end   || null,
     });
   };
 
@@ -641,7 +645,7 @@ function CreateTaskModal({ open, projects, onClose, onSuccess }) {
           <select className="field-input" multiple value={form.assignee_ids}
             onChange={e => set('assignee_ids', Array.from(e.target.selectedOptions, o => o.value))}
             style={{ height: '90px' }}>
-            {users?.filter(u => u.role === 'lab_tech').map(u => (
+            {users?.filter(u => ASSIGNABLE_ROLES.includes(u.role)).map(u => (
               <option key={u.id} value={u.id}>{u.full_name}</option>
             ))}
           </select>
@@ -668,28 +672,58 @@ function CreateTaskModal({ open, projects, onClose, onSuccess }) {
    ============================================================ */
 function EditTaskModal({ task, onClose, onSuccess }) {
   const [form, setForm] = useState({
-    title:         task.title,
-    description:   task.description || '',
-    status:        task.status,
-    priority:      task.priority,
-    planned_start: task.planned_start?.split('T')[0] || '',
-    planned_end:   task.planned_end?.split('T')[0]   || '',
-    actual_start:  task.actual_start?.split('T')[0]  || '',
-    actual_end:    task.actual_end?.split('T')[0]    || '',
-    is_milestone:  task.is_milestone,
+    title:          task.title,
+    description:    task.description || '',
+    status:         task.status,
+    priority:       task.priority,
+    planned_start:  task.planned_start?.split('T')[0] || '',
+    planned_end:    task.planned_end?.split('T')[0]   || '',
+    actual_start:   task.actual_start?.split('T')[0]  || '',
+    actual_end:     task.actual_end?.split('T')[0]    || '',
+    is_milestone:   task.is_milestone,
+    parent_task_id: task.parent_task_id || '',
+    assignee_ids:   (task.assignee_ids || []).map(String),
+  });
+
+  const { data: users } = useQuery({
+    queryKey: ['users-list'],
+    queryFn: () => api.get('/tasks/users').then(r => r.data),
+  });
+
+  const { data: projectTasks } = useQuery({
+    queryKey: ['project-tasks-for-parent', task.project_id],
+    queryFn: () => api.get('/tasks', { params: { project_id: task.project_id } }).then(r => r.data),
+    enabled: !!task.project_id,
   });
 
   const mutation = useMutation({
     mutationFn: data => api.patch(`/tasks/${task.id}`, data),
     onSuccess: () => { toast.success('Task updated.'); onSuccess(); },
-    onError: err => toast.error(err.response?.data?.detail || 'Failed to update task.'),
+    onError: err => toast.error(formatApiError(err, 'Failed to update task.')),
   });
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  const handleSubmit = e => {
+    e.preventDefault();
+    mutation.mutate({
+      ...form,
+      parent_task_id: form.parent_task_id ? parseInt(form.parent_task_id) : null,
+      assignee_ids:   form.assignee_ids.map(Number),
+      // Empty date inputs come through as '' — the backend's Optional[date]
+      // rejects that with a 422 (only an omitted key or explicit null means
+      // "no date"), which silently broke saving any task missing an actual
+      // start/end — i.e. almost every task not yet marked complete.
+      planned_start:  form.planned_start || null,
+      planned_end:    form.planned_end   || null,
+      actual_start:   form.actual_start  || null,
+      actual_end:     form.actual_end    || null,
+    });
+  };
+
   return (
     <Modal open={true} onClose={onClose} title={`Edit — ${task.title}`} size="lg">
-      <form onSubmit={e => { e.preventDefault(); mutation.mutate(form); }} className="task-form">
+      <form onSubmit={handleSubmit} className="task-form">
         <Input label="Title" value={form.title} onChange={e => set('title', e.target.value)} />
         <Textarea label="Description" value={form.description}
           onChange={e => set('description', e.target.value)} rows={2} />
@@ -715,6 +749,17 @@ function EditTaskModal({ task, onClose, onSuccess }) {
           </div>
         </div>
 
+        <div className="field">
+          <label className="field-label">Parent task (for subtasks)</label>
+          <select className="field-input" value={form.parent_task_id}
+            onChange={e => set('parent_task_id', e.target.value)}>
+            <option value="">No parent (top-level task)</option>
+            {projectTasks?.filter(t => !t.parent_task_id && t.id !== task.id).map(t => (
+              <option key={t.id} value={t.id}>{t.title}</option>
+            ))}
+          </select>
+        </div>
+
         <div className="grid-2">
           <Input label="Planned start" type="date" value={form.planned_start}
             onChange={e => set('planned_start', e.target.value)} />
@@ -726,6 +771,18 @@ function EditTaskModal({ task, onClose, onSuccess }) {
             onChange={e => set('actual_start', e.target.value)} />
           <Input label="Actual end" type="date" value={form.actual_end}
             onChange={e => set('actual_end', e.target.value)} />
+        </div>
+
+        <div className="field">
+          <label className="field-label">Assignees</label>
+          <select className="field-input" multiple value={form.assignee_ids}
+            onChange={e => set('assignee_ids', Array.from(e.target.selectedOptions, o => o.value))}
+            style={{ height: '90px' }}>
+            {users?.filter(u => ASSIGNABLE_ROLES.includes(u.role)).map(u => (
+              <option key={u.id} value={u.id}>{u.full_name}</option>
+            ))}
+          </select>
+          <span className="field-hint">Hold Ctrl / Cmd to select multiple</span>
         </div>
 
         <label className="checkbox-label">
@@ -904,7 +961,7 @@ function TemplatesPanel({ onClose }) {
       qc.invalidateQueries(['tasks']);
       setApplyTarget(null);
     },
-    onError: err => toast.error(err.response?.data?.detail || 'Failed to apply template.'),
+    onError: err => toast.error(formatApiError(err, 'Failed to apply template.')),
   });
 
   return (
@@ -1028,7 +1085,7 @@ function CreateTemplateModal({ onClose, onSuccess }) {
       return tid;
     },
     onSuccess: () => { toast.success('Template created.'); onSuccess(); },
-    onError: err => toast.error(err.response?.data?.detail || 'Failed to create template.'),
+    onError: err => toast.error(formatApiError(err, 'Failed to create template.')),
   });
 
   return (

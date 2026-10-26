@@ -26,15 +26,17 @@ class TaskCreate(BaseModel):
     assignee_ids:   List[int] = []
 
 class TaskUpdate(BaseModel):
-    title:         Optional[str]  = None
-    description:   Optional[str]  = None
-    status:        Optional[str]  = None
-    priority:      Optional[str]  = None
-    planned_start: Optional[date] = None
-    planned_end:   Optional[date] = None
-    actual_start:  Optional[date] = None
-    actual_end:    Optional[date] = None
-    is_milestone:  Optional[bool] = None
+    title:          Optional[str]       = None
+    description:    Optional[str]       = None
+    status:         Optional[str]       = None
+    priority:       Optional[str]       = None
+    planned_start:  Optional[date]      = None
+    planned_end:    Optional[date]      = None
+    actual_start:   Optional[date]      = None
+    actual_end:     Optional[date]      = None
+    is_milestone:   Optional[bool]      = None
+    parent_task_id: Optional[int]       = None  # explicit null clears the parent — see fields_set handling below
+    assignee_ids:   Optional[List[int]] = None
 
 class StatusUpdate(BaseModel):
     status: str
@@ -67,7 +69,7 @@ async def list_tasks(
 
     result = await db.execute(text(f"""
         SELECT
-            t.id, t.title, t.task_group, t.description,
+            t.id, t.project_id, t.title, t.task_group, t.description,
             t.status, t.priority, t.is_milestone, t.parent_task_id,
             t.planned_start, t.planned_end, t.actual_start, t.actual_end,
             t.created_at, t.updated_at,
@@ -440,42 +442,90 @@ async def update_task(
     db   = Depends(get_db),
     user = Depends(require_task_editor),
 ):
-    data = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not data:
+    fields_set = body.model_fields_set
+    payload    = body.model_dump()
+
+    # assignee_ids isn't a tasks column — handled separately via task_assignees below.
+    assignee_ids       = payload.pop("assignee_ids", None)
+    update_assignees   = "assignee_ids" in fields_set
+
+    # parent_task_id needs its own handling: an explicit null ("clear the
+    # parent") must still update the column, so it can't be dropped by the
+    # generic "v is not None" filter the other fields use below.
+    new_parent_task_id = payload.pop("parent_task_id", None)
+    update_parent       = "parent_task_id" in fields_set
+
+    data = {k: v for k, v in payload.items() if v is not None}
+    if update_parent:
+        data["parent_task_id"] = new_parent_task_id
+
+    if not data and not update_assignees:
         raise HTTPException(400, "No fields to update.")
 
-    # Auto-set actual dates based on status
-    if data.get("status") == "in_progress":
-        data.setdefault("actual_start", date.today())
-    if data.get("status") == "complete":
-        data.setdefault("actual_end", date.today())
-
-    set_clause = ", ".join(f"{k} = :{k}" for k in data)
-    data["id"] = task_id
-
-    old_result = await db.execute(text(
-        "SELECT status FROM tasks WHERE id = :id"
+    task_result = await db.execute(text(
+        "SELECT status, project_id FROM tasks WHERE id = :id"
     ), {"id": task_id})
-    old_row = old_result.one_or_none()
-    if not old_row:
+    task_row = task_result.one_or_none()
+    if not task_row:
         raise HTTPException(404, "Task not found.")
-    old_status = old_row[0]
+    old_status, project_id = task_row
 
-    await db.execute(text(
-        f"UPDATE tasks SET {set_clause}, updated_at = NOW() WHERE id = :id"
-    ), data)
+    if update_parent and new_parent_task_id is not None:
+        if new_parent_task_id == task_id:
+            raise HTTPException(400, "A task cannot be its own parent.")
 
-    # Write history if status changed
-    if "status" in data and data["status"] != old_status:
-        await db.execute(text("""
-            INSERT INTO task_history (task_id, changed_by, old_status, new_status, notes)
-            VALUES (:task_id, :user_id, :old_status, :new_status, 'Updated via task editor')
-        """), {
-            "task_id":    task_id,
-            "user_id":    user.id,
-            "old_status": old_status,
-            "new_status": data["status"],
-        })
+        parent_result = await db.execute(text(
+            "SELECT project_id, parent_task_id FROM tasks WHERE id = :id"
+        ), {"id": new_parent_task_id})
+        parent_row = parent_result.one_or_none()
+        if not parent_row:
+            raise HTTPException(400, "Parent task not found.")
+        if parent_row[0] != project_id:
+            raise HTTPException(400, "Parent task must belong to the same project.")
+        if parent_row[1] is not None:
+            raise HTTPException(400, "Parent task must itself be a top-level task (no sub-tasks of sub-tasks).")
+
+        children_result = await db.execute(text(
+            "SELECT 1 FROM tasks WHERE parent_task_id = :id LIMIT 1"
+        ), {"id": task_id})
+        if children_result.one_or_none():
+            raise HTTPException(400, "This task already has its own sub-tasks and can't be made a sub-task itself.")
+
+    if data:
+        # Auto-set actual dates based on status
+        if data.get("status") == "in_progress":
+            data.setdefault("actual_start", date.today())
+        if data.get("status") == "complete":
+            data.setdefault("actual_end", date.today())
+
+        set_clause = ", ".join(f"{k} = :{k}" for k in data)
+        data["id"] = task_id
+
+        await db.execute(text(
+            f"UPDATE tasks SET {set_clause}, updated_at = NOW() WHERE id = :id"
+        ), data)
+
+        # Write history if status changed
+        if "status" in data and data["status"] != old_status:
+            await db.execute(text("""
+                INSERT INTO task_history (task_id, changed_by, old_status, new_status, notes)
+                VALUES (:task_id, :user_id, :old_status, :new_status, 'Updated via task editor')
+            """), {
+                "task_id":    task_id,
+                "user_id":    user.id,
+                "old_status": old_status,
+                "new_status": data["status"],
+            })
+
+    if update_assignees:
+        await db.execute(text(
+            "DELETE FROM task_assignees WHERE task_id = :task_id"
+        ), {"task_id": task_id})
+        for uid in (assignee_ids or []):
+            await db.execute(text("""
+                INSERT INTO task_assignees (task_id, user_id) VALUES (:task_id, :user_id)
+                ON CONFLICT DO NOTHING
+            """), {"task_id": task_id, "user_id": uid})
 
     await db.commit()
     return {"message": "Task updated."}
