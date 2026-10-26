@@ -12,7 +12,7 @@ import { formatDate, formatApiError } from '../../utils/format';
 import toast from 'react-hot-toast';
 import './TasksPage.css';
 
-const ASSIGNABLE_ROLES = ['lab_tech', 'qm_director'];
+const ASSIGNABLE_ROLES = ['lab_tech', 'qm_director', 'ceo'];
 
 /* ---- Status helpers ---- */
 function StatusBadge({ status }) {

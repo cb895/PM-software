@@ -61,7 +61,7 @@ function DailyLogsList() {
   const { data: todayLog } = useQuery({
     queryKey: ['my-log-today'],
     queryFn: () => api.get('/daily-logs/today').then(r => r.data),
-    enabled: hasRole('lab_tech', 'qm_director'),
+    enabled: hasRole('lab_tech', 'qm_director', 'ceo'),
   });
 
   const { data: missing } = useQuery({
@@ -86,7 +86,7 @@ function DailyLogsList() {
         title="Daily logs"
         subtitle="Track daily progress, hours, and consumable usage per project"
         action={
-          hasRole('lab_tech', 'qm_director') && (
+          hasRole('lab_tech', 'qm_director', 'ceo') && (
             <Button variant="primary" onClick={() => navigate('/daily-logs/today')}>
               {todayLog?.submitted_at ? "View today's log" : '+ Log today'}
             </Button>
