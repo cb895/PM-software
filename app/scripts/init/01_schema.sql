@@ -1424,7 +1424,8 @@ CREATE TABLE project_template_tasks (
     priority        VARCHAR(20) DEFAULT 'normal',
     estimated_days  INTEGER,         -- relative duration
     offset_days     INTEGER DEFAULT 0, -- days after project start
-    sort_order      INTEGER DEFAULT 0
+    sort_order      INTEGER DEFAULT 0,
+    parent_template_task_id INTEGER REFERENCES project_template_tasks(id)  -- mirrors tasks.parent_task_id; one level of sub-tasks only
 );
 
 -- =============================================================

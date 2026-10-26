@@ -249,17 +249,23 @@ class TemplateCreate(BaseModel):
     description: Optional[str] = None
 
 class TemplateTaskCreate(BaseModel):
-    title:          str
-    description:    Optional[str] = None
-    task_group:     Optional[str] = None
-    priority:       str = 'normal'
-    estimated_days: Optional[int] = None
-    offset_days:    int = 0
-    sort_order:     int = 0
+    title:                   str
+    description:             Optional[str] = None
+    task_group:              Optional[str] = None
+    priority:                str = 'normal'
+    estimated_days:          Optional[int] = None
+    offset_days:             int = 0
+    sort_order:              int = 0
+    parent_template_task_id: Optional[int] = None
 
 class ApplyTemplate(BaseModel):
     project_id: int
     start_date: Optional[str] = None   # ISO date — tasks offset from this
+
+class TemplateFromProject(BaseModel):
+    project_id:  int
+    name:        str
+    description: Optional[str] = None
 
 @router.get("/templates")
 async def list_templates(
@@ -313,6 +319,86 @@ async def create_template(
     return {"id": template_id, "message": "Template created."}
 
 
+@router.post("/templates/from-project", status_code=201)
+async def create_template_from_project(
+    body: TemplateFromProject,
+    db   = Depends(get_db),
+    user = Depends(require_task_editor),
+):
+    """
+    Snapshot a project's current task list into a new reusable template —
+    titles, task_group, and the task/sub-task hierarchy only. Assignees,
+    dates, status, and priority are deliberately left out: a template is a
+    structural starting point, not a copy of one project's execution state.
+    """
+    proj = await db.execute(text(
+        "SELECT id FROM projects WHERE id = :id"
+    ), {"id": body.project_id})
+    if not proj.one_or_none():
+        raise HTTPException(404, "Project not found.")
+
+    source_tasks = await db.execute(text("""
+        SELECT id, title, task_group, parent_task_id
+        FROM tasks WHERE project_id = :pid
+        ORDER BY parent_task_id NULLS FIRST, id
+    """), {"pid": body.project_id})
+    source_tasks = [dict(t) for t in source_tasks.mappings()]
+
+    if not source_tasks:
+        raise HTTPException(400, "This project has no tasks to build a template from.")
+
+    result = await db.execute(text("""
+        INSERT INTO project_templates (name, description, created_by)
+        VALUES (:name, :description, :created_by)
+        RETURNING id
+    """), {"name": body.name, "description": body.description, "created_by": user.id})
+    template_id = result.scalar_one()
+
+    # Two passes: top-level tasks first so child tasks can resolve their
+    # new parent's template-task id (source_tasks is already ordered
+    # parents-before-children via NULLS FIRST above).
+    task_id_map = {}
+    sort_order = 0
+    for t in source_tasks:
+        if t["parent_task_id"] is not None:
+            continue
+        inserted = await db.execute(text("""
+            INSERT INTO project_template_tasks (template_id, title, task_group, sort_order)
+            VALUES (:template_id, :title, :task_group, :sort_order)
+            RETURNING id
+        """), {
+            "template_id": template_id, "title": t["title"],
+            "task_group": t["task_group"], "sort_order": sort_order,
+        })
+        task_id_map[t["id"]] = inserted.scalar_one()
+        sort_order += 1
+
+    for t in source_tasks:
+        if t["parent_task_id"] is None:
+            continue
+        parent_template_task_id = task_id_map.get(t["parent_task_id"])
+        if parent_template_task_id is None:
+            continue  # parent wasn't top-level in this project — shouldn't happen, skip defensively
+        inserted = await db.execute(text("""
+            INSERT INTO project_template_tasks
+                (template_id, title, task_group, sort_order, parent_template_task_id)
+            VALUES (:template_id, :title, :task_group, :sort_order, :parent_template_task_id)
+            RETURNING id
+        """), {
+            "template_id": template_id, "title": t["title"], "task_group": t["task_group"],
+            "sort_order": sort_order, "parent_template_task_id": parent_template_task_id,
+        })
+        task_id_map[t["id"]] = inserted.scalar_one()
+        sort_order += 1
+
+    await db.commit()
+    return {
+        "id": template_id,
+        "tasks_copied": len(task_id_map),
+        "message": f"Template created from {len(task_id_map)} task(s).",
+    }
+
+
 @router.post("/templates/{template_id}/tasks", status_code=201)
 async def add_template_task(
     template_id: int,
@@ -323,10 +409,10 @@ async def add_template_task(
     result = await db.execute(text("""
         INSERT INTO project_template_tasks
             (template_id, title, description, task_group,
-             priority, estimated_days, offset_days, sort_order)
+             priority, estimated_days, offset_days, sort_order, parent_template_task_id)
         VALUES
             (:template_id, :title, :description, :task_group,
-             :priority, :estimated_days, :offset_days, :sort_order)
+             :priority, :estimated_days, :offset_days, :sort_order, :parent_template_task_id)
         RETURNING id
     """), {
         "template_id":    template_id,
@@ -337,6 +423,7 @@ async def add_template_task(
         "estimated_days": body.estimated_days,
         "offset_days":    body.offset_days,
         "sort_order":     body.sort_order,
+        "parent_template_task_id": body.parent_template_task_id,
     })
     task_id = result.scalar_one()
     await db.commit()
@@ -388,9 +475,12 @@ async def apply_template(
     if not project:
         raise HTTPException(404, "Project not found.")
 
-    # Get template tasks
+    # Get template tasks — top-level first so a child task's parent is
+    # already materialized (and its real task id known) by the time it's
+    # the child's turn.
     tasks_result = await db.execute(text(
-        "SELECT * FROM project_template_tasks WHERE template_id = :id ORDER BY sort_order, id"
+        "SELECT * FROM project_template_tasks WHERE template_id = :id "
+        "ORDER BY parent_template_task_id NULLS FIRST, sort_order, id"
     ), {"id": template_id})
     template_tasks = [dict(t) for t in tasks_result.mappings()]
 
@@ -403,29 +493,37 @@ async def apply_template(
         base_date = date.today()
 
     created = []
+    template_task_id_map = {}
     for t in template_tasks:
         planned_start = base_date + timedelta(days=t["offset_days"] or 0)
         planned_end   = planned_start + timedelta(days=t["estimated_days"] or 1)
+        parent_task_id = (
+            template_task_id_map.get(t["parent_template_task_id"])
+            if t["parent_template_task_id"] is not None else None
+        )
 
         result = await db.execute(text("""
             INSERT INTO tasks
                 (project_id, title, description, task_group,
-                 priority, status, planned_start, planned_end, created_by)
+                 priority, status, planned_start, planned_end, created_by, parent_task_id)
             VALUES
                 (:project_id, :title, :description, :task_group,
-                 :priority, 'not_started', :planned_start, :planned_end, :created_by)
+                 :priority, 'not_started', :planned_start, :planned_end, :created_by, :parent_task_id)
             RETURNING id
         """), {
-            "project_id":    body.project_id,
-            "title":         t["title"],
-            "description":   t["description"],
-            "task_group":    t["task_group"],
-            "priority":      t["priority"],
-            "planned_start": planned_start,
-            "planned_end":   planned_end,
-            "created_by":    user.id,
+            "project_id":     body.project_id,
+            "title":          t["title"],
+            "description":    t["description"],
+            "task_group":     t["task_group"],
+            "priority":       t["priority"],
+            "planned_start":  planned_start,
+            "planned_end":    planned_end,
+            "created_by":     user.id,
+            "parent_task_id": parent_task_id,
         })
-        created.append(result.scalar_one())
+        new_task_id = result.scalar_one()
+        template_task_id_map[t["id"]] = new_task_id
+        created.append(new_task_id)
 
     await db.commit()
     return {

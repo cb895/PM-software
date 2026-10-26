@@ -930,6 +930,7 @@ function TemplatesPanel({ onClose }) {
   const qc = useQueryClient();
   const [selected, setSelected]     = useState(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showGenerate, setShowGenerate] = useState(false);
   const [applyTarget, setApplyTarget] = useState(null);
 
   const { data: templates } = useQuery({
@@ -970,6 +971,7 @@ function TemplatesPanel({ onClose }) {
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'1rem 1.25rem', borderBottom:'1px solid var(--border)', background:'var(--bg-raised)' }}>
           <h3 style={{ fontSize:'1rem', fontWeight:600 }}>Project templates</h3>
           <div style={{ display:'flex', gap:'0.5rem' }}>
+            <Button variant="secondary" size="sm" onClick={() => setShowGenerate(true)}>From project…</Button>
             <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>+ New template</Button>
             <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text-muted)', cursor:'pointer', fontSize:'1.25rem', padding:'0 4px' }}>×</button>
           </div>
@@ -997,14 +999,27 @@ function TemplatesPanel({ onClose }) {
 
               {selected?.id === t.id && detail?.tasks?.length > 0 && (
                 <div style={{ marginTop:'0.75rem', borderTop:'1px solid var(--border)', paddingTop:'0.75rem' }}>
-                  {detail.tasks.map((tt, i) => (
-                    <div key={tt.id} style={{ fontSize:'0.8125rem', color:'var(--text-secondary)', padding:'3px 0', display:'flex', gap:'0.5rem' }}>
-                      <span style={{ color:'var(--text-muted)', minWidth:'20px' }}>{i+1}.</span>
-                      <span>{tt.title}</span>
-                      {tt.task_group && <Badge variant="muted">{tt.task_group}</Badge>}
-                      {tt.offset_days > 0 && <span style={{ color:'var(--text-muted)' }}>+{tt.offset_days}d</span>}
-                    </div>
-                  ))}
+                  {(() => {
+                    const topLevel = detail.tasks.filter(tt => !tt.parent_template_task_id);
+                    const childrenOf = pid => detail.tasks.filter(tt => tt.parent_template_task_id === pid);
+                    return topLevel.map((tt, i) => (
+                      <div key={tt.id}>
+                        <div style={{ fontSize:'0.8125rem', color:'var(--text-secondary)', padding:'3px 0', display:'flex', gap:'0.5rem' }}>
+                          <span style={{ color:'var(--text-muted)', minWidth:'20px' }}>{i+1}.</span>
+                          <span>{tt.title}</span>
+                          {tt.task_group && <Badge variant="muted">{tt.task_group}</Badge>}
+                          {tt.offset_days > 0 && <span style={{ color:'var(--text-muted)' }}>+{tt.offset_days}d</span>}
+                        </div>
+                        {childrenOf(tt.id).map(ct => (
+                          <div key={ct.id} style={{ fontSize:'0.8125rem', color:'var(--text-muted)', padding:'3px 0 3px 2rem', display:'flex', gap:'0.5rem' }}>
+                            <span>↳</span>
+                            <span>{ct.title}</span>
+                            {ct.task_group && <Badge variant="muted">{ct.task_group}</Badge>}
+                          </div>
+                        ))}
+                      </div>
+                    ));
+                  })()}
                 </div>
               )}
             </div>
@@ -1015,6 +1030,12 @@ function TemplatesPanel({ onClose }) {
       {/* Create template modal */}
       {showCreate && <CreateTemplateModal onClose={() => setShowCreate(false)}
         onSuccess={() => { setShowCreate(false); qc.invalidateQueries(['task-templates']); }} />}
+
+      {/* Generate template from project modal */}
+      {showGenerate && <GenerateTemplateFromProjectModal
+        projects={projects || []}
+        onClose={() => setShowGenerate(false)}
+        onSuccess={() => { setShowGenerate(false); qc.invalidateQueries(['task-templates']); }} />}
 
       {/* Apply template modal */}
       {applyTarget && (
@@ -1060,6 +1081,56 @@ function ApplyTemplateForm({ template, projects, onApply, onCancel, loading }) {
           Apply template
         </Button>
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
+function GenerateTemplateFromProjectModal({ projects, onClose, onSuccess }) {
+  const [projectId, setProjectId] = useState('');
+  const [name, setName]           = useState('');
+  const [description, setDescription] = useState('');
+
+  const mutation = useMutation({
+    mutationFn: () => api.post('/tasks/templates/from-project', {
+      project_id: parseInt(projectId), name, description: description || null,
+    }),
+    onSuccess: (res) => { toast.success(res.data.message); onSuccess(); },
+    onError: err => toast.error(formatApiError(err, 'Failed to generate template.')),
+  });
+
+  const handleSubmit = e => {
+    e.preventDefault();
+    if (!projectId) { toast.error('Select a project.'); return; }
+    if (!name)      { toast.error('Enter a template name.'); return; }
+    mutation.mutate();
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:300, display:'flex', alignItems:'center', justifyContent:'center', padding:'1rem' }}>
+      <div style={{ background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:'var(--radius-lg)', padding:'1.5rem', width:'420px' }}>
+        <h3 style={{ marginBottom:'0.5rem' }}>Generate template from project</h3>
+        <p style={{ fontSize:'0.8125rem', color:'var(--text-muted)', marginBottom:'1rem' }}>
+          Copies the project's current task and sub-task titles and groups into
+          a new template. Assignees, dates, status, and priority are left blank.
+        </p>
+        <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:'1rem' }}>
+          <div className="field">
+            <label className="field-label">Source project *</label>
+            <select className="field-input" value={projectId} onChange={e => setProjectId(e.target.value)}>
+              <option value="">Select project…</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+            </select>
+          </div>
+          <Input label="Template name *" value={name} onChange={e => setName(e.target.value)}
+            placeholder="e.g. Standard cortisol assay plan" />
+          <Input label="Description" value={description} onChange={e => setDescription(e.target.value)}
+            placeholder="When to use this template…" />
+          <div style={{ display:'flex', gap:'0.5rem' }}>
+            <Button type="submit" variant="primary" loading={mutation.isPending}>Generate template</Button>
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          </div>
+        </form>
       </div>
     </div>
   );
