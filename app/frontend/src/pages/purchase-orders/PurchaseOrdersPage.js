@@ -387,7 +387,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
 /* ---- Detail view ---- */
 function PODetail() {
   const { id } = { id: window.location.pathname.split('/').pop() };
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const qc = useQueryClient();
   const navigate = useNavigate();
 
@@ -410,11 +410,20 @@ function PODetail() {
   const [showReceive, setShowReceive] = useState(false);
   const [showEditDate, setShowEditDate] = useState(false);
 
+  const updateQtyMutation = useMutation({
+    mutationFn: ({ lineItemId, quantity_ordered }) =>
+      api.patch(`/purchase-orders/${id}/items/${lineItemId}`, { quantity_ordered }),
+    onSuccess: () => { toast.success('Quantity updated.'); qc.invalidateQueries(['purchase-order', id]); },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to update quantity.'),
+  });
+
   if (isLoading) return <LoadingState />;
   if (!po) return <EmptyState title="PO not found" action={<Button onClick={() => navigate('/purchase-orders')}>Back</Button>} />;
 
   const canReceive = !['pending', 'rejected', 'closed'].includes(po.status);
   const hasRemaining = po.line_items?.some(it => (it.quantity_received || 0) < it.quantity_ordered - 0.001);
+  const canEditItems = po.status === 'pending' &&
+    (user?.id === po.requested_by_id || hasRole('ops_manager', 'ceo', 'qm_director'));
 
   return (
     <div>
@@ -504,7 +513,15 @@ function PODetail() {
                     </div>
                   </Td>
                   <Td><span className="text-mono">{item.product_id || '—'}</span></Td>
-                  <Td>{item.quantity_ordered}</Td>
+                  <Td>
+                    {canEditItems ? (
+                      <EditableQty
+                        value={item.quantity_ordered}
+                        saving={updateQtyMutation.isPending && updateQtyMutation.variables?.lineItemId === item.id}
+                        onSave={qty => updateQtyMutation.mutate({ lineItemId: item.id, quantity_ordered: qty })}
+                      />
+                    ) : item.quantity_ordered}
+                  </Td>
                   <Td>{item.unit}</Td>
                   <Td>{formatCurrency(item.unit_cost_estimate)}</Td>
                   <Td>{formatCurrency((item.quantity_ordered || 0) * (item.unit_cost_estimate || 0))}</Td>
@@ -561,6 +578,44 @@ function PODetail() {
         onSuccess={() => { setShowEditDate(false); qc.invalidateQueries(['purchase-order', id]); }}
       />
     </div>
+  );
+}
+
+/* ---- Editable quantity cell (pending POs only) ---- */
+function EditableQty({ value, saving, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState(value);
+
+  if (!editing) {
+    return (
+      <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {value}
+        <button type="button" className="item-link" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
+          onClick={() => { setDraft(value); setEditing(true); }}>
+          edit
+        </button>
+      </span>
+    );
+  }
+
+  const save = () => {
+    const qty = parseFloat(draft);
+    if (!qty || qty <= 0) { toast.error('Enter a quantity greater than zero.'); return; }
+    onSave(qty);
+    setEditing(false);
+  };
+
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+      <input
+        type="number" min="0.001" step="any" value={draft}
+        onChange={e => setDraft(e.target.value)}
+        style={{ width: '70px' }} className="field-input"
+        autoFocus
+      />
+      <Button variant="ghost" size="sm" loading={saving} onClick={save}>Save</Button>
+      <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>×</Button>
+    </span>
   );
 }
 

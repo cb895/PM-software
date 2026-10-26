@@ -60,6 +60,10 @@ class ReceivePOIn(BaseModel):
     items: List[ReceiptItemIn]
 
 
+class LineItemUpdate(BaseModel):
+    quantity_ordered: float
+
+
 # ---- Helpers ----
 
 PO_SUMMARY_SQL = """
@@ -75,6 +79,7 @@ PO_SUMMARY_SQL = """
         po.received_date,
         po.expected_delivery,
         po.created_at,
+        po.requested_by AS requested_by_id,
         p.code   AS project_code,
         p.name   AS project_name,
         COALESCE(s.name, po.supplier_name_free) AS supplier_name,
@@ -249,6 +254,49 @@ async def get_purchase_order(
         "line_items": [dict(r) for r in items_result.mappings()],
         "receipts": [dict(r) for r in receipts_result.mappings()],
     }
+
+
+@router.patch("/{po_id}/items/{line_item_id}")
+async def update_line_item_quantity(
+    po_id: int,
+    line_item_id: int,
+    body: LineItemUpdate,
+    db   = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    """
+    Correct a line item's quantity while the request is still pending —
+    e.g. the requester or an approver catches a typo before it's approved.
+    Once a PO leaves 'pending' (approved, rejected, or any later status)
+    its line items are locked; they're the record of what was actually
+    ordered/received by that point.
+    """
+    po_result = await db.execute(text(
+        "SELECT status, requested_by FROM purchase_orders WHERE id = :id"
+    ), {"id": po_id})
+    po_row = po_result.mappings().one_or_none()
+    if not po_row:
+        raise HTTPException(404, "Purchase order not found.")
+
+    if po_row["status"] != "pending":
+        raise HTTPException(400, "Line items can only be edited while the request is pending approval.")
+
+    if user.id != po_row["requested_by"] and user.role not in ("ops_manager", "ceo", "qm_director"):
+        raise HTTPException(403, "Only the requester or an approver can edit this request's line items.")
+
+    if body.quantity_ordered <= 0:
+        raise HTTPException(400, "Quantity must be greater than zero.")
+
+    result = await db.execute(text("""
+        UPDATE po_line_items SET quantity_ordered = :qty
+        WHERE id = :line_item_id AND po_id = :po_id
+        RETURNING id
+    """), {"qty": body.quantity_ordered, "line_item_id": line_item_id, "po_id": po_id})
+    if not result.one_or_none():
+        raise HTTPException(404, "Line item not found on this purchase order.")
+
+    await db.commit()
+    return {"message": "Quantity updated."}
 
 
 @router.post("/{po_id}/approve")
