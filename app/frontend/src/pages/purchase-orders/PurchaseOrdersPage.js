@@ -340,7 +340,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
                 <div className="field">
                   {i === 0 && <label className="field-label">Unit</label>}
                   <select className="field-input" style={{ width: '90px' }} value={item.unit} onChange={e => setItem(i, 'unit', e.target.value)}>
-                    {['each','box','case','pack','liter','milliliter','gram','kilogram','roll','pair','set'].map(u => (
+                    {['each','box','case','pack','liter','milliliter','microliter','gram','milligram','microgram','kilogram','meter','roll','pair','set'].map(u => (
                       <option key={u} value={u}>{u}</option>
                     ))}
                   </select>

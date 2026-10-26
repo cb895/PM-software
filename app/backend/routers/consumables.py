@@ -56,7 +56,7 @@ async def list_consumables(db = Depends(get_db), user = Depends(get_current_user
         SELECT c.id, c.name, c.sku, c.category, c.unit, c.is_shared,
                c.current_stock, c.reorder_threshold, c.reorder_quantity,
                c.unit_cost, c.location, c.auto_reorder, c.reorder_po_drafted,
-               c.is_active, c.last_restocked, c.description,
+               c.is_active, c.last_restocked, c.description, c.created_at,
                c.project_id, c.preferred_supplier_id,
                p.code  AS project_code,
                s.name  AS preferred_supplier

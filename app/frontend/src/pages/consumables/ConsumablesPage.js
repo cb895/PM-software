@@ -13,7 +13,7 @@ import toast from 'react-hot-toast';
 import './ConsumablesPage.css';
 
 const CATEGORIES = ['reagent','antibody','buffer','antigen','conjugate','nanoparticle','membrane','packaging','equipment','general'];
-const UNITS = ['each','box','case','pack','liter','milliliter','gram','kilogram','meter','roll','pair','set'];
+const UNITS = ['each','box','case','pack','liter','milliliter','microliter','gram','milligram','microgram','kilogram','meter','roll','pair','set'];
 
 function CategoryBadge({ category }) {
   const map = {
@@ -30,6 +30,30 @@ function StockStatus({ current, threshold }) {
   return <Badge variant="success">OK</Badge>;
 }
 
+// 0 = most urgent, so the default ascending sort surfaces out-of-stock first
+function statusRank(c) {
+  if (c.current_stock <= 0) return 0;
+  if (c.current_stock <= c.reorder_threshold) return 1;
+  return 2;
+}
+
+function SortableTh({ label, sortKey, sortBy, sortDir, onSort }) {
+  const active = sortBy === sortKey;
+  return (
+    <Th>
+      <button
+        type="button"
+        className="sortable-th-btn"
+        onClick={() => onSort(sortKey)}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', color: 'inherit', padding: 0, display: 'flex', alignItems: 'center', gap: '4px' }}
+      >
+        {label}
+        <span style={{ opacity: active ? 1 : 0.3 }}>{active && sortDir === 'desc' ? '▼' : '▲'}</span>
+      </button>
+    </Th>
+  );
+}
+
 /* ============================================================
    Consumables List
    ============================================================ */
@@ -42,6 +66,17 @@ function ConsumablesList() {
   const [catFilter, setCatFilter]     = useState('');
   const [showLowOnly, setShowLowOnly] = useState(false);
   const [showCreate, setShowCreate]   = useState(false);
+  const [sortBy, setSortBy]           = useState(null);
+  const [sortDir, setSortDir]         = useState('asc');
+
+  const handleSort = key => {
+    if (sortBy === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(key);
+      setSortDir('asc');
+    }
+  };
 
   const { data: consumables, isLoading } = useQuery({
     queryKey: ['consumables'],
@@ -63,6 +98,22 @@ function ConsumablesList() {
     const matchLow  = !showLowOnly || c.current_stock <= c.reorder_threshold;
     return matchSearch && matchCat && matchLow;
   });
+
+  const sorted = sortBy ? [...filtered].sort((a, b) => {
+    let cmp = 0;
+    if (sortBy === 'name') {
+      cmp = (a.name || '').localeCompare(b.name || '');
+    } else if (sortBy === 'sku') {
+      cmp = (a.sku || '').localeCompare(b.sku || '');
+    } else if (sortBy === 'status') {
+      cmp = statusRank(a) - statusRank(b);
+    } else if (sortBy === 'supplier') {
+      cmp = (a.preferred_supplier || '').localeCompare(b.preferred_supplier || '');
+    } else if (sortBy === 'date_added') {
+      cmp = new Date(a.created_at || 0) - new Date(b.created_at || 0);
+    }
+    return sortDir === 'desc' ? -cmp : cmp;
+  }) : filtered;
 
   const stats = {
     total:    consumables?.length ?? 0,
@@ -142,19 +193,20 @@ function ConsumablesList() {
         <Table>
           <thead>
             <tr>
-              <Th>Name</Th>
-              <Th>SKU</Th>
+              <SortableTh label="Name" sortKey="name" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="SKU" sortKey="sku" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <Th>Category</Th>
               <Th>Stock</Th>
               <Th>Threshold</Th>
               <Th>Stock level</Th>
-              <Th>Status</Th>
+              <SortableTh label="Status" sortKey="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <Th>Location</Th>
-              <Th>Supplier</Th>
+              <SortableTh label="Supplier" sortKey="supplier" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Date added" sortKey="date_added" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>
-            {filtered.map(c => (
+            {sorted.map(c => (
               <tr key={c.id}
                 onClick={() => navigate(`/consumables/${c.id}`)}
                 style={{ cursor: 'pointer' }}
@@ -185,6 +237,7 @@ function ConsumablesList() {
                 <Td><StockStatus current={c.current_stock} threshold={c.reorder_threshold} /></Td>
                 <Td>{c.location || '—'}</Td>
                 <Td>{c.preferred_supplier || '—'}</Td>
+                <Td>{formatDate(c.created_at) || '—'}</Td>
               </tr>
             ))}
           </tbody>
