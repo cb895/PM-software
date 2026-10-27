@@ -12,6 +12,7 @@ class UserRole(str, enum.Enum):
     ops_manager = "ops_manager"
     qm_director = "qm_director"
     ceo         = "ceo"
+    intern      = "intern"
 
 
 class User(Base):

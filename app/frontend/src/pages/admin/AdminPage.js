@@ -16,6 +16,7 @@ const ROLE_LABELS = {
   ops_manager: 'Operations manager',
   qm_director: 'QM director',
   ceo:         'CEO',
+  intern:      'Student intern',
 };
 
 const ROLE_BADGE = {
@@ -23,6 +24,7 @@ const ROLE_BADGE = {
   ops_manager: 'accent',
   qm_director: 'info',
   ceo:         'warning',
+  intern:      'success',
 };
 
 function initials(name) {
@@ -338,6 +340,7 @@ function CreateAccountModal({ open, onClose, onSuccess }) {
             <option value="qm_director">QM director</option>
             <option value="ceo">CEO</option>
             <option value="ops_manager">Operations manager</option>
+            <option value="intern">Student intern</option>
           </select>
         </div>
         <div>

@@ -126,5 +126,13 @@ require_kpi_manager = require_roles("ops_manager", "ceo")
 # Reports — all actions (generate, edit, publish, read): ops + ceo
 require_report_manager = require_roles("ops_manager", "ceo")
 
+# Intern hours — log own hours: intern only; view everyone's: ops + ceo
+require_intern         = require_roles("intern")
+require_intern_access  = require_roles("ops_manager", "ceo")
+
+# Core business modules (tasks, consumables, daily logs, projects, POs) —
+# interns are excluded from all of them; they only ever use intern_logs.
+require_non_intern = require_roles("lab_tech", "ops_manager", "qm_director", "ceo")
+
 # Any authenticated user
 require_any = Depends(get_current_user)

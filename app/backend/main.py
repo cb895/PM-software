@@ -9,6 +9,7 @@ from core.config   import settings
 from core.database import engine, Base
 from routers import auth, dashboard, purchase_orders, suppliers, consumables
 from routers import daily_logs, tasks, budget, kpi, reports, notifications, hr, projects
+from routers import intern_logs
 
 
 @asynccontextmanager
@@ -53,6 +54,7 @@ app.include_router(reports.router,         prefix="/reports",        tags=["Repo
 app.include_router(notifications.router,   prefix="/notifications",  tags=["Notifications"])
 app.include_router(hr.router,              prefix="/hr",             tags=["HR"])
 app.include_router(projects.router,        prefix="/projects",       tags=["Projects"])
+app.include_router(intern_logs.router,     prefix="/intern-logs",    tags=["Intern Logs"])
 
 
 @app.get("/health")

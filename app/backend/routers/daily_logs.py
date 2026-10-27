@@ -8,7 +8,7 @@ from datetime import date
 from pydantic import BaseModel
 from typing import List
 from core.database import get_db
-from core.security import get_current_user, require_roles
+from core.security import get_current_user, require_roles, require_non_intern
 
 router = APIRouter()
 
@@ -157,7 +157,7 @@ async def clear_missing_log_backlog(
     return {"deleted": len(deleted), "message": f"{len(deleted)} flag(s) deleted."}
 
 @router.post("/today/entries")
-async def add_log_entry(body: LogEntryIn, db = Depends(get_db), user = Depends(get_current_user)):
+async def add_log_entry(body: LogEntryIn, db = Depends(get_db), user = Depends(require_non_intern)):
     # Get or create today's log
     result = await db.execute(text("""
         INSERT INTO daily_logs (user_id, log_date)
@@ -271,7 +271,7 @@ async def add_log_entry(body: LogEntryIn, db = Depends(get_db), user = Depends(g
     return {"log_id": log_id, "entry_id": entry_id}
 
 @router.get("/today")
-async def get_today_log(db = Depends(get_db), user = Depends(get_current_user)):
+async def get_today_log(db = Depends(get_db), user = Depends(require_non_intern)):
     result = await db.execute(text("""
         SELECT dl.id, dl.log_date, dl.submitted_at,
                COALESCE(SUM(dle.hours_spent), 0) AS total_hours,
@@ -285,7 +285,7 @@ async def get_today_log(db = Depends(get_db), user = Depends(get_current_user)):
     return dict(row) if row else None
 
 @router.post("/today/submit")
-async def submit_today_log(db = Depends(get_db), user = Depends(get_current_user)):
+async def submit_today_log(db = Depends(get_db), user = Depends(require_non_intern)):
     result = await db.execute(text("""
         UPDATE daily_logs SET submitted_at = NOW(), updated_at = NOW()
         WHERE user_id = :uid AND log_date = CURRENT_DATE AND submitted_at IS NULL

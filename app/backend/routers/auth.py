@@ -164,7 +164,7 @@ async def create_user(
     if current_user.role != "ops_manager":
         raise HTTPException(403, "Only the operations manager can create accounts.")
 
-    valid_roles = ["lab_tech", "ops_manager", "qm_director", "ceo"]
+    valid_roles = ["lab_tech", "ops_manager", "qm_director", "ceo", "intern"]
     if body.role not in valid_roles:
         raise HTTPException(400, f"Role must be one of: {valid_roles}")
     if len(body.password) < 8:

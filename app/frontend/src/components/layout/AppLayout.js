@@ -6,18 +6,21 @@ import api from '../../api/client';
 import { formatDate } from '../../utils/format';
 import './AppLayout.css';
 
+const NON_INTERN_ROLES = ['lab_tech', 'ops_manager', 'qm_director', 'ceo'];
+
 const NAV_ITEMS = [
-  { to: '/',                label: 'Dashboard',       icon: '⬡', roles: null },
-  { to: '/projects',         label: 'Projects',         icon: '◆', roles: null },
-  { to: '/purchase-orders', label: 'Purchase orders',  icon: '◈', roles: null },
-  { to: '/suppliers',       label: 'Suppliers',        icon: '◇', roles: null },
-  { to: '/consumables',     label: 'Consumables',      icon: '◎', roles: null },
-  { to: '/daily-logs',      label: 'Daily logs',       icon: '◱', roles: null },
-  { to: '/tasks',           label: 'Tasks & Gantt',    icon: '◫', roles: null },
+  { to: '/',                label: 'Dashboard',       icon: '⬡', roles: NON_INTERN_ROLES },
+  { to: '/projects',         label: 'Projects',         icon: '◆', roles: NON_INTERN_ROLES },
+  { to: '/purchase-orders', label: 'Purchase orders',  icon: '◈', roles: NON_INTERN_ROLES },
+  { to: '/suppliers',       label: 'Suppliers',        icon: '◇', roles: NON_INTERN_ROLES },
+  { to: '/consumables',     label: 'Consumables',      icon: '◎', roles: NON_INTERN_ROLES },
+  { to: '/daily-logs',      label: 'Daily logs',       icon: '◱', roles: NON_INTERN_ROLES },
+  { to: '/tasks',           label: 'Tasks & Gantt',    icon: '◫', roles: NON_INTERN_ROLES },
   { to: '/budget',          label: 'Budget',           icon: '◈', roles: ['ops_manager','ceo'] },
   { to: '/kpi',             label: 'KPI tracking',     icon: '◉', roles: ['ops_manager','ceo'] },
-  { to: '/reports',         label: 'Weekly reports',   icon: '◧', roles: null },
-  { to: '/hr',               label: 'HR portal',        icon: '♦', roles: null },
+  { to: '/reports',         label: 'Weekly reports',   icon: '◧', roles: NON_INTERN_ROLES },
+  { to: '/hr',               label: 'HR portal',        icon: '♦', roles: NON_INTERN_ROLES },
+  { to: '/intern-hours',     label: 'Intern hours',     icon: '◷', roles: ['intern','ops_manager','ceo'] },
   { to: '/admin',            label: 'User management',  icon: '◉', roles: ['ops_manager'] },
 ];
 
@@ -26,6 +29,7 @@ const ROLE_LABELS = {
   ops_manager: 'Operations manager',
   qm_director: 'QM director',
   ceo:         'CEO',
+  intern:      'Student intern',
 };
 
 export default function AppLayout() {

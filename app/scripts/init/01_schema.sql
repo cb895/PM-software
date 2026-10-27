@@ -15,7 +15,8 @@ CREATE TYPE user_role AS ENUM (
     'lab_tech',
     'ops_manager',
     'qm_director',
-    'ceo'
+    'ceo',
+    'intern'
 );
 
 -- Updated from screenshots: New order, In progress, Emailed items,
@@ -355,6 +356,21 @@ CREATE TABLE daily_log_entry_tasks (
     notes               TEXT,                                      -- per-task progress note
     status_update       task_status,                               -- NULL = no change, set to update
     UNIQUE (log_entry_id, task_id)
+);
+
+-- Intern presence log — deliberately standalone from daily_logs. Just
+-- tracks that a student intern was in the lab, for how long, and a
+-- one-line summary. Not tied to a project, task, or consumable, and
+-- never read by the weekly-report, budget, or consumable-usage logic.
+CREATE TABLE intern_logs (
+    id                  SERIAL PRIMARY KEY,
+    user_id             INTEGER         NOT NULL REFERENCES users(id),
+    log_date            DATE            NOT NULL DEFAULT CURRENT_DATE,
+    hours               NUMERIC(4,2)    NOT NULL,
+    summary             TEXT,
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, log_date)
 );
 
 CREATE INDEX idx_log_entry_tasks_entry ON daily_log_entry_tasks(log_entry_id);
