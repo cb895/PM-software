@@ -191,12 +191,13 @@ function TaskList({ tasks, onRefresh }) {
             <thead>
               <tr>
                 <Th>Task</Th>
+                <Th>Project</Th>
                 <Th>Assignees</Th>
                 <Th>Status</Th>
                 <Th>Priority</Th>
                 <Th>Planned start</Th>
                 <Th>Planned end</Th>
-                <Th>Progress</Th>
+                <Th></Th>
               </tr>
             </thead>
             <tbody>
@@ -212,6 +213,7 @@ function TaskList({ tasks, onRefresh }) {
                         </span>
                       </div>
                     </Td>
+                    <Td><Badge variant="muted">{task.project_code}</Badge></Td>
                     <Td>
                       <div className="assignee-list">
                         {task.assignees?.map(a => (
