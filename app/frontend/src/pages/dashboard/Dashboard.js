@@ -36,15 +36,40 @@ export default function Dashboard() {
     enabled: hasRole('ops_manager'),
   });
 
+  const invalidateMissing = () => {
+    qc.invalidateQueries(['dashboard-missing-logs']);
+    qc.invalidateQueries(['dashboard-stats']);
+  };
+
   const excuseMutation = useMutation({
-    mutationFn: flagId => api.post(`/daily-logs/missing/${flagId}/excuse`, {}),
-    onSuccess: () => {
-      toast.success('Missing log excused.');
-      qc.invalidateQueries(['dashboard-missing-logs']);
-      qc.invalidateQueries(['dashboard-stats']);
-    },
+    mutationFn: ({ flagId, reason }) => api.post(`/daily-logs/missing/${flagId}/excuse`, { reason }),
+    onSuccess: () => { toast.success('Missing log excused.'); invalidateMissing(); },
     onError: err => toast.error(err.response?.data?.detail || 'Failed to excuse.'),
   });
+
+  const deleteFlagMutation = useMutation({
+    mutationFn: flagId => api.delete(`/daily-logs/missing/${flagId}`),
+    onSuccess: () => { toast.success('Flag deleted.'); invalidateMissing(); },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to delete.'),
+  });
+
+  const clearBacklogMutation = useMutation({
+    mutationFn: () => api.delete('/daily-logs/missing'),
+    onSuccess: (res) => { toast.success(res.data.message); invalidateMissing(); },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to clear backlog.'),
+  });
+
+  const handleExcuse = flagId => {
+    const reason = window.prompt('Reason for excusing this missed log (e.g. sick day, emergency leave):');
+    if (reason === null) return; // cancelled
+    excuseMutation.mutate({ flagId, reason: reason || null });
+  };
+
+  const handleClearBacklog = () => {
+    if (window.confirm(`Permanently delete all ${missingLogs?.length ?? 0} unresolved missing-log flags? This cannot be undone.`)) {
+      clearBacklogMutation.mutate();
+    }
+  };
 
   const { data: budgetSummary } = useQuery({
     queryKey: ['dashboard-budget'],
@@ -216,7 +241,14 @@ export default function Dashboard() {
       {/* Missing logs — ops only */}
         {hasRole('ops_manager') && (
           <Card className="dashboard-card">
-            <CardHeader title="Missing logs" />
+            <CardHeader
+              title="Missing logs"
+              action={missingLogs?.length > 0 && (
+                <Button variant="ghost" size="sm" loading={clearBacklogMutation.isPending} onClick={handleClearBacklog}>
+                  Clear all
+                </Button>
+              )}
+            />
             {!missingLogs?.length ? (
               <EmptyState title="All logs submitted" />
             ) : (
@@ -228,10 +260,17 @@ export default function Dashboard() {
                       <Badge variant="danger">Not submitted</Badge>
                       <Button
                         variant="ghost" size="sm"
-                        loading={excuseMutation.isPending && excuseMutation.variables === m.flag_id}
-                        onClick={() => excuseMutation.mutate(m.flag_id)}
+                        loading={excuseMutation.isPending && excuseMutation.variables?.flagId === m.flag_id}
+                        onClick={() => handleExcuse(m.flag_id)}
                       >
                         Excuse
+                      </Button>
+                      <Button
+                        variant="ghost" size="sm"
+                        loading={deleteFlagMutation.isPending && deleteFlagMutation.variables === m.flag_id}
+                        onClick={() => deleteFlagMutation.mutate(m.flag_id)}
+                      >
+                        Delete
                       </Button>
                     </div>
                   </div>

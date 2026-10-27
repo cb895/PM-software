@@ -119,6 +119,43 @@ async def excuse_missing_log(
     await db.commit()
     return {"message": "Missing log excused."}
 
+
+@router.delete("/missing/{flag_id}")
+async def delete_missing_log_flag(
+    flag_id: int,
+    db   = Depends(get_db),
+    user = Depends(require_roles("ops_manager")),
+):
+    """Permanently remove a single missing-log flag — for a bad flag raised
+    while the daily-log feature was still being rolled out, as opposed to
+    excuse_missing_log's auditable "resolved with a reason" for a real
+    missed day (sick day, emergency, etc)."""
+    result = await db.execute(text(
+        "DELETE FROM missing_log_flags WHERE id = :id RETURNING id"
+    ), {"id": flag_id})
+    if not result.one_or_none():
+        raise HTTPException(404, "Missing-log flag not found.")
+
+    await db.commit()
+    return {"message": "Flag deleted."}
+
+
+@router.delete("/missing")
+async def clear_missing_log_backlog(
+    db   = Depends(get_db),
+    user = Depends(require_roles("ops_manager")),
+):
+    """Bulk-delete every unresolved missing-log flag — for clearing out a
+    backlog raised while the daily-log feature was still being rolled out
+    and techs weren't submitting logs yet. Leaves already-excused flags
+    (which carry a real resolve_reason) untouched."""
+    result = await db.execute(text(
+        "DELETE FROM missing_log_flags WHERE resolved = FALSE RETURNING id"
+    ))
+    deleted = result.all()
+    await db.commit()
+    return {"deleted": len(deleted), "message": f"{len(deleted)} flag(s) deleted."}
+
 @router.post("/today/entries")
 async def add_log_entry(body: LogEntryIn, db = Depends(get_db), user = Depends(get_current_user)):
     # Get or create today's log
