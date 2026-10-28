@@ -12,6 +12,12 @@ import { formatDate, formatHours } from '../../utils/format';
 import toast from 'react-hot-toast';
 import './DailyLogsPage.css';
 
+function LogStatusBadge({ status }) {
+  if (status === 'needs_revision') return <Badge variant="danger">Needs revision</Badge>;
+  if (status === 'submitted')      return <Badge variant="success">Submitted</Badge>;
+  return <Badge variant="warning">Draft</Badge>;
+}
+
 function createBlankEntry() {
   return {
     _id: Math.random(),
@@ -28,7 +34,7 @@ function createBlankEntry() {
 
 /* ---- List view ---- */
 function DailyLogsList() {
-  const { hasRole } = useAuth();
+  const { user, hasRole } = useAuth();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const today = new Date().toISOString().split('T')[0];
@@ -68,6 +74,12 @@ function DailyLogsList() {
     queryKey: ['missing-logs'],
     queryFn: () => api.get('/daily-logs/missing').then(r => r.data),
     enabled: hasRole('ops_manager'),
+  });
+
+  const { data: needsRevision } = useQuery({
+    queryKey: ['my-logs-needing-revision', user?.id],
+    queryFn: () => api.get('/daily-logs', { params: { status: 'needs_revision', user_id: user.id } }).then(r => r.data),
+    enabled: !!user?.id && hasRole('lab_tech', 'qm_director', 'ceo'),
   });
 
   const invalidateMissing = () => {
@@ -175,6 +187,25 @@ function DailyLogsList() {
         </Card>
       )}
 
+      {needsRevision?.length > 0 && (
+        <Card className="missing-alert">
+          <CardHeader title="Needs your revision" subtitle="Sent back by a reviewer — open to see why and resubmit" />
+          <div className="missing-list">
+            {needsRevision.map(log => (
+              <div key={log.id} className="missing-row">
+                <span className="missing-name">{formatDate(log.log_date)}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Badge variant="danger">Needs revision</Badge>
+                  <Button variant="ghost" size="sm" onClick={() => navigate(`/daily-logs/${log.id}`)}>
+                    Review &amp; revise
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {/* Filter bar */}
       <div style={{ display:'flex', gap:'0.75rem', marginBottom:'1rem', flexWrap:'wrap', alignItems:'flex-end' }}>
         <div className="field" style={{ margin:0, minWidth:'160px' }}>
@@ -238,7 +269,7 @@ function DailyLogsList() {
                   </div>
                 </Td>
                 <Td>{formatHours(log.total_hours)}</Td>
-                <Td>{log.submitted_at ? <Badge variant="success">Submitted</Badge> : <Badge variant="warning">Draft</Badge>}</Td>
+                <Td><LogStatusBadge status={log.status} /></Td>
               </tr>
             ))}
           </tbody>
@@ -618,16 +649,174 @@ function TodayLog() {
 }
 
 /* ---- Log detail (read-only) ---- */
+const REVISION_FIELD_LABELS = {
+  work_completed:    'Work completed',
+  issues_blockers:   'Issues / blockers',
+  next_steps:        'Next steps',
+  additional_notes:  'Additional notes',
+};
+
+function RevisionHistory({ revisions }) {
+  if (!revisions?.length) return null;
+  return (
+    <Card style={{ marginTop: '1.5rem' }}>
+      <CardHeader title="Revision history" subtitle="Who sent this back, what changed, and when" />
+      <div className="revision-timeline">
+        {revisions.map(r => (
+          <div key={r.id} className="revision-entry" style={{ padding: '0.75rem 0', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <strong style={{ fontSize: '0.875rem' }}>
+                {r.action === 'sent_back' && `${r.actor_name} sent this back for revision`}
+                {r.action === 'field_edit' && `${r.actor_name} edited ${REVISION_FIELD_LABELS[Object.keys(r.field_changes || {})[0]] || 'an entry'}`}
+                {r.action === 'resubmitted' && `${r.actor_name} resubmitted`}
+              </strong>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                {formatDate(r.created_at, 'MMM d, yyyy h:mm a')}
+              </span>
+            </div>
+            {r.reason && (
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '4px' }}>"{r.reason}"</p>
+            )}
+            {r.field_changes && Object.entries(r.field_changes).map(([field, diff]) => (
+              <div key={field} style={{ fontSize: '0.8125rem', marginTop: '6px', background: 'var(--bg-raised)', borderRadius: 'var(--radius-sm)', padding: '0.5rem 0.75rem' }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '2px' }}>{REVISION_FIELD_LABELS[field] || field}</div>
+                <div style={{ color: 'var(--danger)', textDecoration: 'line-through' }}>{diff.old || '(empty)'}</div>
+                <div style={{ color: 'var(--success)' }}>{diff.new || '(empty)'}</div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function RevisableEntry({ entry, logId, editable, onSaved }) {
+  const [form, setForm] = useState({
+    work_completed:   entry.work_completed || '',
+    issues_blockers:  entry.issues_blockers || '',
+    next_steps:       entry.next_steps || '',
+    additional_notes: entry.additional_notes || '',
+  });
+
+  const mutation = useMutation({
+    mutationFn: () => api.patch(`/daily-logs/${logId}/entries/${entry.id}/revise`, form),
+    onSuccess: () => { toast.success('Entry updated.'); onSaved(); },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to save changes.'),
+  });
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  return (
+    <Card className={`entry-card ${editable ? '' : 'entry-card--readonly'}`}>
+      <div className="entry-header">
+        <div className="entry-header-left">
+          <Badge variant="muted">{entry.project_code}</Badge>
+          <span className="entry-project-name">{entry.project_name}</span>
+          <span className="hours-display">{formatHours(entry.hours_spent)}</span>
+        </div>
+        {editable && (
+          <Button variant="primary" size="sm" loading={mutation.isPending} onClick={() => mutation.mutate()}>
+            Save changes
+          </Button>
+        )}
+      </div>
+
+      {editable ? (
+        <div className="notes-grid">
+          <Textarea label="Work completed" value={form.work_completed} onChange={e => set('work_completed', e.target.value)} rows={3} />
+          <Textarea label="Issues / blockers" value={form.issues_blockers} onChange={e => set('issues_blockers', e.target.value)} rows={3} />
+          <Textarea label="Next steps" value={form.next_steps} onChange={e => set('next_steps', e.target.value)} rows={3} />
+          <Textarea label="Additional notes" value={form.additional_notes} onChange={e => set('additional_notes', e.target.value)} rows={2} />
+        </div>
+      ) : (
+        <div className="readonly-notes">
+          {entry.work_completed && <div className="note-section"><span className="note-label">Work completed</span><p>{entry.work_completed}</p></div>}
+          {entry.issues_blockers && <div className="note-section"><span className="note-label">Issues / blockers</span><p>{entry.issues_blockers}</p></div>}
+          {entry.next_steps && <div className="note-section"><span className="note-label">Next steps</span><p>{entry.next_steps}</p></div>}
+          {entry.additional_notes && <div className="note-section"><span className="note-label">Additional notes</span><p>{entry.additional_notes}</p></div>}
+        </div>
+      )}
+
+      {entry.tasks?.length > 0 && (
+        <div className="entry-sub-section">
+          <h4 className="sub-section-title">Tasks</h4>
+          <Table>
+            <thead><tr><Th>Task</Th><Th>Status update</Th><Th>Notes</Th></tr></thead>
+            <tbody>
+              {entry.tasks.map(t => (
+                <tr key={t.task_id}>
+                  <Td>{t.task_title}</Td>
+                  <Td>{t.status_update ? <Badge variant={t.status_update === 'complete' ? 'success' : t.status_update === 'blocked' ? 'danger' : 'accent'}>{t.status_update.replace(/_/g, ' ')}</Badge> : <span style={{ color: 'var(--text-muted)' }}>No change</span>}</Td>
+                  <Td>{t.notes || '—'}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
+      )}
+      {entry.consumables?.length > 0 && (
+        <div className="entry-sub-section">
+          <h4 className="sub-section-title">Consumables used</h4>
+          <Table>
+            <thead><tr><Th>Item</Th><Th>Category</Th><Th>Quantity</Th><Th>Notes</Th></tr></thead>
+            <tbody>
+              {entry.consumables.map((c, ci) => (
+                <tr key={ci}>
+                  <Td>{c.name}</Td>
+                  <Td><Badge variant="muted">{c.category}</Badge></Td>
+                  <Td>{c.quantity_used} {c.unit}</Td>
+                  <Td>{c.notes || '—'}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function LogDetail() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { user, hasRole } = useAuth();
   const id = window.location.pathname.split('/').pop();
   const { data: log, isLoading } = useQuery({
     queryKey: ['daily-log', id],
     queryFn: () => api.get(`/daily-logs/${id}`).then(r => r.data),
   });
 
+  const invalidate = () => {
+    qc.invalidateQueries(['daily-log', id]);
+    qc.invalidateQueries(['daily-logs']);
+    qc.invalidateQueries(['my-logs-needing-revision']);
+  };
+
+  const requestRevisionMutation = useMutation({
+    mutationFn: reason => api.post(`/daily-logs/${id}/request-revision`, { reason }),
+    onSuccess: () => { toast.success('Sent back for revision.'); invalidate(); },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to send back.'),
+  });
+
+  const resubmitMutation = useMutation({
+    mutationFn: () => api.post(`/daily-logs/${id}/resubmit`),
+    onSuccess: () => { toast.success('Resubmitted.'); invalidate(); },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to resubmit.'),
+  });
+
+  const handleRequestRevision = () => {
+    const reason = window.prompt('Reason for sending this log back for revision:');
+    if (!reason) return;
+    requestRevisionMutation.mutate(reason);
+  };
+
   if (isLoading) return <LoadingState />;
   if (!log) return <EmptyState title="Log not found" action={<Button onClick={() => navigate('/daily-logs')}>Back</Button>} />;
+
+  const isOwnLog   = user?.id === log.user_id;
+  const canReview  = hasRole('ops_manager', 'ceo');
+  const isEditable = isOwnLog && log.status === 'needs_revision';
 
   return (
     <div>
@@ -636,11 +825,36 @@ function LogDetail() {
         subtitle={formatDate(log.log_date, 'EEEE, MMMM d, yyyy')}
         action={
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <Badge variant={log.submitted_at ? 'success' : 'warning'}>{log.submitted_at ? 'Submitted' : 'Draft'}</Badge>
+            <LogStatusBadge status={log.status} />
+            {canReview && log.status === 'submitted' && (
+              <Button variant="danger" loading={requestRevisionMutation.isPending} onClick={handleRequestRevision}>
+                Send back for revision
+              </Button>
+            )}
+            {isEditable && (
+              <Button variant="primary" loading={resubmitMutation.isPending} onClick={() => resubmitMutation.mutate()}>
+                Resubmit
+              </Button>
+            )}
             <Button variant="secondary" onClick={() => navigate('/daily-logs')}>← Back</Button>
           </div>
         }
       />
+
+      {log.status === 'needs_revision' && (
+        <Card style={{ marginBottom: '1.25rem', borderColor: 'var(--danger)' }}>
+          <p style={{ fontSize: '0.875rem' }}>
+            <strong>{log.revision_requested_by_name}</strong> sent this back for revision
+            {log.revision_requested_at && <> on {formatDate(log.revision_requested_at, 'MMM d, yyyy h:mm a')}</>}:
+          </p>
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.375rem' }}>"{log.revision_reason}"</p>
+          {isEditable && (
+            <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+              Edit the entries below, then click Resubmit.
+            </p>
+          )}
+        </Card>
+      )}
 
       <div className="log-detail-summary stats-row">
         <StatCard label="Total hours" value={formatHours(log.total_hours)} accent />
@@ -648,57 +862,16 @@ function LogDetail() {
       </div>
 
       {log.entries?.map(entry => (
-        <Card key={entry.id} className="entry-card entry-card--readonly">
-          <div className="entry-header">
-            <div className="entry-header-left">
-              <Badge variant="muted">{entry.project_code}</Badge>
-              <span className="entry-project-name">{entry.project_name}</span>
-              <span className="hours-display">{formatHours(entry.hours_spent)}</span>
-            </div>
-          </div>
-          <div className="readonly-notes">
-            {entry.work_completed && <div className="note-section"><span className="note-label">Work completed</span><p>{entry.work_completed}</p></div>}
-            {entry.issues_blockers && <div className="note-section"><span className="note-label">Issues / blockers</span><p>{entry.issues_blockers}</p></div>}
-            {entry.next_steps && <div className="note-section"><span className="note-label">Next steps</span><p>{entry.next_steps}</p></div>}
-            {entry.additional_notes && <div className="note-section"><span className="note-label">Additional notes</span><p>{entry.additional_notes}</p></div>}
-          </div>
-          {entry.tasks?.length > 0 && (
-            <div className="entry-sub-section">
-              <h4 className="sub-section-title">Tasks</h4>
-              <Table>
-                <thead><tr><Th>Task</Th><Th>Status update</Th><Th>Notes</Th></tr></thead>
-                <tbody>
-                  {entry.tasks.map(t => (
-                    <tr key={t.task_id}>
-                      <Td>{t.task_title}</Td>
-                      <Td>{t.status_update ? <Badge variant={t.status_update === 'complete' ? 'success' : t.status_update === 'blocked' ? 'danger' : 'accent'}>{t.status_update.replace(/_/g, ' ')}</Badge> : <span style={{ color: 'var(--text-muted)' }}>No change</span>}</Td>
-                      <Td>{t.notes || '—'}</Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          )}
-          {entry.consumables?.length > 0 && (
-            <div className="entry-sub-section">
-              <h4 className="sub-section-title">Consumables used</h4>
-              <Table>
-                <thead><tr><Th>Item</Th><Th>Category</Th><Th>Quantity</Th><Th>Notes</Th></tr></thead>
-                <tbody>
-                  {entry.consumables.map((c, ci) => (
-                    <tr key={ci}>
-                      <Td>{c.name}</Td>
-                      <Td><Badge variant="muted">{c.category}</Badge></Td>
-                      <Td>{c.quantity_used} {c.unit}</Td>
-                      <Td>{c.notes || '—'}</Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          )}
-        </Card>
+        <RevisableEntry
+          key={entry.id}
+          entry={entry}
+          logId={log.log_id}
+          editable={isEditable}
+          onSaved={invalidate}
+        />
       ))}
+
+      <RevisionHistory revisions={log.revisions} />
     </div>
   );
 }

@@ -323,6 +323,11 @@ CREATE TABLE daily_logs (
     user_id             INTEGER         NOT NULL REFERENCES users(id),
     log_date            DATE            NOT NULL DEFAULT CURRENT_DATE,
     submitted_at        TIMESTAMPTZ,                               -- NULL = still in draft
+    status              VARCHAR(20)     NOT NULL DEFAULT 'draft'
+                            CHECK (status IN ('draft','submitted','needs_revision')),
+    revision_requested_by INTEGER       REFERENCES users(id),      -- ops_manager/ceo who sent it back
+    revision_requested_at TIMESTAMPTZ,
+    revision_reason     TEXT,
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     UNIQUE (user_id, log_date)                                     -- one log per person per day
@@ -357,6 +362,25 @@ CREATE TABLE daily_log_entry_tasks (
     status_update       task_status,                               -- NULL = no change, set to update
     UNIQUE (log_entry_id, task_id)
 );
+
+-- Audit trail for the send-back-for-revision workflow: who sent a
+-- submitted log back and why, each field a writer then changed while
+-- revising it, and when they resubmitted. A writer can only ever reach
+-- field_edit/resubmitted rows through the revise/resubmit endpoints,
+-- which require daily_logs.status = 'needs_revision' — they can't edit
+-- a submitted log on their own initiative.
+CREATE TABLE daily_log_revisions (
+    id                  SERIAL PRIMARY KEY,
+    log_id              INTEGER         NOT NULL REFERENCES daily_logs(id) ON DELETE CASCADE,
+    entry_id            INTEGER         REFERENCES daily_log_entries(id) ON DELETE CASCADE,
+    action              VARCHAR(20)     NOT NULL,                  -- 'sent_back' | 'field_edit' | 'resubmitted'
+    actor_id            INTEGER         NOT NULL REFERENCES users(id),
+    reason              TEXT,                                      -- sent_back: why it was kicked back
+    field_changes        JSONB,                                     -- field_edit: {"field": {"old": ..., "new": ...}}
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_daily_log_revisions_log ON daily_log_revisions(log_id);
 
 -- Intern presence log — deliberately standalone from daily_logs. Just
 -- tracks that a student intern was in the lab, for how long, and a

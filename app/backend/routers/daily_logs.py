@@ -1,4 +1,5 @@
 """routers/daily_logs.py — Daily log endpoints"""
+import json
 from fastapi import APIRouter, Depends, Query, HTTPException
 from services.document_service import dispatch_daily_log
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +36,7 @@ async def list_logs(
     user_id:    Optional[int]  = Query(None),
     week_start: Optional[str]  = Query(None),
     week_end:   Optional[str]  = Query(None),
+    status:     Optional[str]  = Query(None),
     db = Depends(get_db), user = Depends(get_current_user)
 ):
     params = {}
@@ -60,16 +62,22 @@ async def list_logs(
         where.append("dl.log_date <= :week_end")
         params["week_end"] = week_end
 
+    if status:
+        where.append("dl.status = :status")
+        params["status"] = status
+
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     result = await db.execute(text(f"""
-        SELECT dl.id, dl.log_date, dl.submitted_at,
+        SELECT dl.id, dl.log_date, dl.submitted_at, dl.status,
                u.full_name AS employee, u.id AS user_id,
                COUNT(DISTINCT dle.id) AS project_count,
+               ARRAY_AGG(DISTINCT p.code) FILTER (WHERE p.code IS NOT NULL) AS project_codes,
                COALESCE(SUM(dle.hours_spent), 0) AS total_hours
         FROM daily_logs dl
         JOIN users u ON u.id = dl.user_id
         LEFT JOIN daily_log_entries dle ON dle.log_id = dl.id
+        LEFT JOIN projects p ON p.id = dle.project_id
         {where_sql}
         GROUP BY dl.id, u.full_name, u.id
         ORDER BY dl.log_date DESC
@@ -79,6 +87,17 @@ async def list_logs(
 
 class ExcuseIn(BaseModel):
     reason: Optional[str] = None
+
+class RevisionRequestIn(BaseModel):
+    reason: str
+
+class EntryRevisionIn(BaseModel):
+    work_completed:   Optional[str] = None
+    issues_blockers:  Optional[str] = None
+    next_steps:       Optional[str] = None
+    additional_notes: Optional[str] = None
+
+REVISABLE_FIELDS = ["work_completed", "issues_blockers", "next_steps", "additional_notes"]
 
 
 @router.get("/missing")
@@ -158,14 +177,23 @@ async def clear_missing_log_backlog(
 
 @router.post("/today/entries")
 async def add_log_entry(body: LogEntryIn, db = Depends(get_db), user = Depends(require_non_intern)):
-    # Get or create today's log
+    # Get or create today's log. The WHERE on the conflict update means this
+    # silently does nothing (and returns no row) if today's log already
+    # exists but isn't a draft — otherwise a same-day "Log today" visit
+    # after submitting (or after being sent back for revision) would
+    # silently overwrite the submitted content with no audit trail at all,
+    # bypassing the whole send-back-for-revision gate.
     result = await db.execute(text("""
-        INSERT INTO daily_logs (user_id, log_date)
-        VALUES (:user_id, CURRENT_DATE)
+        INSERT INTO daily_logs (user_id, log_date, status)
+        VALUES (:user_id, CURRENT_DATE, 'draft')
         ON CONFLICT (user_id, log_date) DO UPDATE SET updated_at = NOW()
+            WHERE daily_logs.status = 'draft'
         RETURNING id
     """), {"user_id": user.id})
-    log_id = result.scalar_one()
+    log_id = result.scalar_one_or_none()
+    if log_id is None:
+        raise HTTPException(400, "Today's log has already been submitted and can't be edited this way. "
+                                  "If it needs changes, a reviewer must send it back for revision first.")
 
     # Insert project entry
     result = await db.execute(text("""
@@ -287,7 +315,7 @@ async def get_today_log(db = Depends(get_db), user = Depends(require_non_intern)
 @router.post("/today/submit")
 async def submit_today_log(db = Depends(get_db), user = Depends(require_non_intern)):
     result = await db.execute(text("""
-        UPDATE daily_logs SET submitted_at = NOW(), updated_at = NOW()
+        UPDATE daily_logs SET submitted_at = NOW(), status = 'submitted', updated_at = NOW()
         WHERE user_id = :uid AND log_date = CURRENT_DATE AND submitted_at IS NULL
         RETURNING id
     """), {"uid": user.id})
@@ -362,19 +390,32 @@ async def submit_today_log(db = Depends(get_db), user = Depends(require_non_inte
 async def get_log_detail(log_id: int, db = Depends(get_db), user = Depends(get_current_user)):
     result = await db.execute(text("""
         SELECT dl.id AS log_id, dl.log_date, dl.submitted_at,
+               dl.status, dl.revision_reason, dl.revision_requested_at,
                u.full_name AS employee, u.id AS user_id,
+               u_rev.full_name AS revision_requested_by_name,
                COUNT(dle.id) AS projects_worked,
                COALESCE(SUM(dle.hours_spent), 0) AS total_hours
         FROM daily_logs dl
         JOIN users u ON u.id = dl.user_id
+        LEFT JOIN users u_rev ON u_rev.id = dl.revision_requested_by
         LEFT JOIN daily_log_entries dle ON dle.log_id = dl.id
         WHERE dl.id = :lid
-        GROUP BY dl.id, u.full_name, u.id
+        GROUP BY dl.id, u.full_name, u.id, u_rev.full_name
     """), {"lid": log_id})
     log = result.mappings().one_or_none()
     if not log:
         from fastapi import HTTPException
         raise HTTPException(404, "Log not found.")
+
+    revisions_result = await db.execute(text("""
+        SELECT dlr.id, dlr.action, dlr.reason, dlr.field_changes, dlr.created_at,
+               dlr.entry_id, u.full_name AS actor_name
+        FROM daily_log_revisions dlr
+        JOIN users u ON u.id = dlr.actor_id
+        WHERE dlr.log_id = :lid
+        ORDER BY dlr.created_at
+    """), {"lid": log_id})
+    revisions = [dict(r) for r in revisions_result.mappings()]
 
     entries_result = await db.execute(text("""
         SELECT dle.id, p.code AS project_code, p.name AS project_name,
@@ -405,10 +446,144 @@ async def get_log_detail(log_id: int, db = Depends(get_db), user = Depends(get_c
         """), {"eid": entry["id"]})
         entry["consumables"] = [dict(r) for r in cons_r.mappings()]
 
-    return {**dict(log), "entries": entries}
+    return {**dict(log), "entries": entries, "revisions": revisions}
 
 
-# ---- Delay detection ---- 
+# ---- Send back for revision ----
+
+@router.post("/{log_id}/request-revision")
+async def request_log_revision(
+    log_id: int,
+    body:   RevisionRequestIn,
+    db      = Depends(get_db),
+    user    = Depends(require_roles("ops_manager", "ceo")),
+):
+    """
+    Send an already-submitted log back to its writer for revision. The
+    writer can then only edit it through revise_log_entry/resubmit_log
+    below — there's no general-purpose "edit my old log" endpoint, so a
+    writer can never revise a submitted log on their own initiative.
+    """
+    log_result = await db.execute(text(
+        "SELECT user_id, status FROM daily_logs WHERE id = :id"
+    ), {"id": log_id})
+    log_row = log_result.mappings().one_or_none()
+    if not log_row:
+        raise HTTPException(404, "Log not found.")
+    if log_row["status"] != "submitted":
+        raise HTTPException(400, f"Only a submitted log can be sent back for revision (current status: {log_row['status']}).")
+
+    await db.execute(text("""
+        UPDATE daily_logs
+        SET status = 'needs_revision', revision_requested_by = :uid,
+            revision_requested_at = NOW(), revision_reason = :reason, updated_at = NOW()
+        WHERE id = :log_id
+    """), {"log_id": log_id, "uid": user.id, "reason": body.reason})
+
+    await db.execute(text("""
+        INSERT INTO daily_log_revisions (log_id, action, actor_id, reason)
+        VALUES (:log_id, 'sent_back', :uid, :reason)
+    """), {"log_id": log_id, "uid": user.id, "reason": body.reason})
+
+    await db.execute(text("""
+        INSERT INTO notifications (recipient_id, notification_type, title, message, reference_id, reference_type)
+        VALUES (:uid, 'log_revision', 'Daily log sent back for revision',
+                :reason, :log_id, 'daily_log')
+    """), {"uid": log_row["user_id"], "reason": body.reason, "log_id": log_id})
+
+    await db.commit()
+    return {"message": "Sent back for revision."}
+
+
+@router.patch("/{log_id}/entries/{entry_id}/revise")
+async def revise_log_entry(
+    log_id: int,
+    entry_id: int,
+    body: EntryRevisionIn,
+    db   = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    """Edit one entry on a log that's currently needs_revision — the only
+    way a submitted log's content can change, and only its own writer can
+    call this. Each changed field is recorded in daily_log_revisions."""
+    log_result = await db.execute(text(
+        "SELECT user_id, status FROM daily_logs WHERE id = :id"
+    ), {"id": log_id})
+    log_row = log_result.mappings().one_or_none()
+    if not log_row:
+        raise HTTPException(404, "Log not found.")
+    if user.id != log_row["user_id"]:
+        raise HTTPException(403, "Only the person who wrote this log can revise it.")
+    if log_row["status"] != "needs_revision":
+        raise HTTPException(400, "This log isn't awaiting revision.")
+
+    entry_result = await db.execute(text("""
+        SELECT work_completed, issues_blockers, next_steps, additional_notes
+        FROM daily_log_entries WHERE id = :eid AND log_id = :log_id
+    """), {"eid": entry_id, "log_id": log_id})
+    old = entry_result.mappings().one_or_none()
+    if not old:
+        raise HTTPException(404, "Entry not found on this log.")
+
+    updates = body.model_dump(exclude_unset=True)
+    changes = {}
+    for field in REVISABLE_FIELDS:
+        if field in updates and updates[field] != old[field]:
+            changes[field] = {"old": old[field], "new": updates[field]}
+
+    if not changes:
+        raise HTTPException(400, "No changes to apply.")
+
+    set_clause = ", ".join(f"{f} = :{f}" for f in changes)
+    params = {f: changes[f]["new"] for f in changes}
+    params.update({"eid": entry_id, "log_id": log_id})
+    await db.execute(text(
+        f"UPDATE daily_log_entries SET {set_clause}, updated_at = NOW() WHERE id = :eid AND log_id = :log_id"
+    ), params)
+
+    await db.execute(text("""
+        INSERT INTO daily_log_revisions (log_id, entry_id, action, actor_id, field_changes)
+        VALUES (:log_id, :eid, 'field_edit', :uid, CAST(:changes AS JSONB))
+    """), {"log_id": log_id, "eid": entry_id, "uid": user.id, "changes": json.dumps(changes)})
+
+    await db.commit()
+    return {"message": "Entry updated.", "changed_fields": list(changes.keys())}
+
+
+@router.post("/{log_id}/resubmit")
+async def resubmit_log(
+    log_id: int,
+    db   = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    """Finish a revision cycle — puts the log back to 'submitted' for the
+    reviewer to look at again."""
+    log_result = await db.execute(text(
+        "SELECT user_id, status FROM daily_logs WHERE id = :id"
+    ), {"id": log_id})
+    log_row = log_result.mappings().one_or_none()
+    if not log_row:
+        raise HTTPException(404, "Log not found.")
+    if user.id != log_row["user_id"]:
+        raise HTTPException(403, "Only the person who wrote this log can resubmit it.")
+    if log_row["status"] != "needs_revision":
+        raise HTTPException(400, "This log isn't awaiting revision.")
+
+    await db.execute(text("""
+        UPDATE daily_logs SET status = 'submitted', submitted_at = NOW(), updated_at = NOW()
+        WHERE id = :log_id
+    """), {"log_id": log_id})
+
+    await db.execute(text("""
+        INSERT INTO daily_log_revisions (log_id, action, actor_id)
+        VALUES (:log_id, 'resubmitted', :uid)
+    """), {"log_id": log_id, "uid": user.id})
+
+    await db.commit()
+    return {"message": "Resubmitted."}
+
+
+# ---- Delay detection ----
 
 async def analyse_log_for_delays(entry_id: int, task_updates: list, issues_text: str, db) -> list:
     """Call Claude API to detect delay signals in a log entry. Returns list of proposals."""
