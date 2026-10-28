@@ -14,6 +14,8 @@ from services.document_service import dispatch_po_approved
 
 router = APIRouter()
 
+BUDGET_TREATMENTS = ('overhead', 'project_cost', 'consumable_usage')
+
 
 # ---- Schemas ----
 
@@ -25,6 +27,7 @@ class LineItemIn(BaseModel):
     unit:               str = "each"
     unit_cost_estimate: Optional[float] = None
     consumable_id:      Optional[int]   = None
+    budget_treatment:   Optional[str]   = None  # overhead | project_cost | consumable_usage; defaulted if omitted
     notes:              Optional[str]   = None
 
 
@@ -51,9 +54,10 @@ class RejectIn(BaseModel):
 
 
 class ReceiptItemIn(BaseModel):
-    line_item_id:      int
-    quantity_received: float
-    notes:             Optional[str] = None
+    line_item_id:       int
+    quantity_received:  float
+    unit_cost_actual:   Optional[float] = None  # confirms/corrects the cost posted to budget for this receipt
+    notes:              Optional[str] = None
 
 
 class ReceivePOIn(BaseModel):
@@ -62,6 +66,10 @@ class ReceivePOIn(BaseModel):
 
 class LineItemUpdate(BaseModel):
     quantity_ordered: float
+
+
+class BudgetTreatmentUpdate(BaseModel):
+    budget_treatment: str
 
 
 # ---- Helpers ----
@@ -156,6 +164,9 @@ async def create_purchase_order(
         raise HTTPException(400, "Provide a project_id, or set is_overhead=true for overhead purchases.")
     if not body.items:
         raise HTTPException(400, "At least one line item is required.")
+    for item in body.items:
+        if item.budget_treatment and item.budget_treatment not in BUDGET_TREATMENTS:
+            raise HTTPException(400, f"Invalid budget_treatment. Must be one of: {BUDGET_TREATMENTS}")
 
     result = await db.execute(text("""
         INSERT INTO purchase_orders
@@ -182,13 +193,27 @@ async def create_purchase_order(
     po_id = result.scalar_one()
 
     for item in body.items:
+        # Default treatment when not given explicitly: items tracked as
+        # inventory are consumed over time; items on an overhead PO default
+        # to overhead; everything else charges the project directly.
+        budget_treatment = item.budget_treatment
+        if not budget_treatment:
+            if item.consumable_id:
+                budget_treatment = 'consumable_usage'
+            elif body.is_overhead:
+                budget_treatment = 'overhead'
+            else:
+                budget_treatment = 'project_cost'
+
         await db.execute(text("""
             INSERT INTO po_line_items
                 (po_id, description, product_id, product_url,
-                 quantity_ordered, unit, unit_cost_estimate, consumable_id, notes)
+                 quantity_ordered, unit, unit_cost_estimate, consumable_id,
+                 budget_treatment, notes)
             VALUES
                 (:po_id, :description, :product_id, :product_url,
-                 :quantity_ordered, :unit, :unit_cost_estimate, :consumable_id, :notes)
+                 :quantity_ordered, :unit, :unit_cost_estimate, :consumable_id,
+                 :budget_treatment, :notes)
         """), {
             "po_id":              po_id,
             "description":        item.description,
@@ -198,6 +223,7 @@ async def create_purchase_order(
             "unit":               item.unit,
             "unit_cost_estimate": item.unit_cost_estimate,
             "consumable_id":      item.consumable_id,
+            "budget_treatment":   budget_treatment,
             "notes":              item.notes,
         })
 
@@ -231,7 +257,7 @@ async def get_purchase_order(
     items_result = await db.execute(text("""
         SELECT li.id, li.description, li.product_id, li.product_url,
                li.quantity_ordered, li.unit, li.unit_cost_estimate, li.unit_cost_actual,
-               li.consumable_id, li.notes,
+               li.consumable_id, li.budget_treatment, li.notes,
                COALESCE(SUM(pr.quantity_received), 0) AS quantity_received
         FROM po_line_items li
         LEFT JOIN po_receipts pr ON pr.line_item_id = li.id
@@ -297,6 +323,54 @@ async def update_line_item_quantity(
 
     await db.commit()
     return {"message": "Quantity updated."}
+
+
+@router.patch("/{po_id}/items/{line_item_id}/budget-treatment")
+async def update_line_item_budget_treatment(
+    po_id: int,
+    line_item_id: int,
+    body: BudgetTreatmentUpdate,
+    db   = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    """
+    Change how a line item posts to the budget once received. Locked once
+    any quantity has actually been received against that item — at that
+    point the budget entry (or deliberate absence of one) already reflects
+    the prior treatment.
+    """
+    if body.budget_treatment not in BUDGET_TREATMENTS:
+        raise HTTPException(400, f"Invalid budget_treatment. Must be one of: {BUDGET_TREATMENTS}")
+
+    po_result = await db.execute(text(
+        "SELECT requested_by FROM purchase_orders WHERE id = :id"
+    ), {"id": po_id})
+    po_row = po_result.mappings().one_or_none()
+    if not po_row:
+        raise HTTPException(404, "Purchase order not found.")
+
+    if user.id != po_row["requested_by"] and user.role not in ("ops_manager", "ceo", "qm_director"):
+        raise HTTPException(403, "Only the requester or an approver can edit this request's line items.")
+
+    li_result = await db.execute(text("""
+        SELECT li.id, COALESCE(SUM(pr.quantity_received), 0) AS already_received
+        FROM po_line_items li
+        LEFT JOIN po_receipts pr ON pr.line_item_id = li.id
+        WHERE li.id = :line_item_id AND li.po_id = :po_id
+        GROUP BY li.id
+    """), {"line_item_id": line_item_id, "po_id": po_id})
+    li_row = li_result.mappings().one_or_none()
+    if not li_row:
+        raise HTTPException(404, "Line item not found on this purchase order.")
+    if float(li_row["already_received"]) > 0:
+        raise HTTPException(400, "Can't change budget treatment after this item has been received.")
+
+    await db.execute(text("""
+        UPDATE po_line_items SET budget_treatment = :bt WHERE id = :line_item_id
+    """), {"bt": body.budget_treatment, "line_item_id": line_item_id})
+
+    await db.commit()
+    return {"message": "Budget treatment updated."}
 
 
 @router.post("/{po_id}/approve")
@@ -388,7 +462,7 @@ async def receive_po(
     received in full, the PO itself flips to 'received'.
     """
     po_result = await db.execute(text(
-        "SELECT status FROM purchase_orders WHERE id = :id"
+        "SELECT status, project_id, is_overhead, po_number FROM purchase_orders WHERE id = :id"
     ), {"id": po_id})
     po_row = po_result.mappings().one_or_none()
     if not po_row:
@@ -401,6 +475,7 @@ async def receive_po(
 
     li_result = await db.execute(text("""
         SELECT li.id, li.description, li.quantity_ordered, li.unit, li.consumable_id,
+               li.unit_cost_estimate, li.unit_cost_actual, li.budget_treatment,
                COALESCE(SUM(pr.quantity_received), 0) AS already_received
         FROM po_line_items li
         LEFT JOIN po_receipts pr ON pr.line_item_id = li.id
@@ -426,13 +501,20 @@ async def receive_po(
     for item in body.items:
         li = line_items[item.line_item_id]
 
-        await db.execute(text("""
+        receipt_result = await db.execute(text("""
             INSERT INTO po_receipts (po_id, line_item_id, received_by, quantity_received, notes)
             VALUES (:po_id, :line_item_id, :user_id, :qty, :notes)
+            RETURNING id
         """), {
             "po_id": po_id, "line_item_id": item.line_item_id, "user_id": user.id,
             "qty": item.quantity_received, "notes": item.notes,
         })
+        receipt_id = receipt_result.scalar_one()
+
+        if item.unit_cost_actual is not None:
+            await db.execute(text("""
+                UPDATE po_line_items SET unit_cost_actual = :cost WHERE id = :lid
+            """), {"cost": item.unit_cost_actual, "lid": item.line_item_id})
 
         if li["consumable_id"]:
             await db.execute(text("""
@@ -450,6 +532,62 @@ async def receive_po(
                 "cid": li["consumable_id"], "uid": user.id, "qty": item.quantity_received,
                 "notes": f"Received on PO #{po_id}",
             })
+
+        # Post to budget per this item's treatment — skipped entirely for
+        # consumable_usage items, whose cost is tracked as stock is consumed
+        # (see fn_post_consumable_budget), not at receipt.
+        treatment = li["budget_treatment"] or "project_cost"
+        if treatment != "consumable_usage":
+            unit_cost = item.unit_cost_actual
+            if unit_cost is None:
+                unit_cost = li["unit_cost_actual"]
+            if unit_cost is None:
+                unit_cost = li["unit_cost_estimate"]
+
+            if unit_cost:
+                amount = round(float(item.quantity_received) * float(unit_cost), 2)
+                # A PO already flagged overhead has no project to charge even
+                # if an item was left as project_cost.
+                is_overhead_entry = treatment == "overhead" or po_row["project_id"] is None
+                entry_project_id  = None if is_overhead_entry else po_row["project_id"]
+
+                phase_id = None
+                if entry_project_id is not None:
+                    phase_result = await db.execute(text("""
+                        SELECT id FROM project_phases
+                        WHERE project_id = :pid AND is_active = TRUE
+                          AND (start_date IS NULL OR start_date <= CURRENT_DATE)
+                          AND (end_date   IS NULL OR end_date   >= CURRENT_DATE)
+                        LIMIT 1
+                    """), {"pid": entry_project_id})
+                    phase_id = phase_result.scalar_one_or_none()
+
+                po_label = po_row["po_number"] or f"#{po_id}"
+                await db.execute(text("""
+                    INSERT INTO budget_entries (
+                        project_id, phase_id, entry_type,
+                        reference_id, reference_type,
+                        description, amount, entry_date, is_overhead, created_by
+                    ) VALUES (
+                        :project_id, :phase_id, 'purchase_order',
+                        :reference_id, 'po_receipt',
+                        :description, :amount, CURRENT_DATE, :is_overhead, :created_by
+                    )
+                """), {
+                    "project_id":  entry_project_id,
+                    "phase_id":    phase_id,
+                    "reference_id": receipt_id,
+                    "description": f"PO {po_label} — {li['description']} received "
+                                    f"({item.quantity_received:g} {li['unit']})",
+                    "amount":      amount,
+                    "is_overhead": is_overhead_entry,
+                    "created_by":  user.id,
+                })
+
+                if entry_project_id is not None:
+                    await db.execute(text(
+                        "SELECT fn_check_budget_alert(:pid, :phid)"
+                    ), {"pid": entry_project_id, "phid": phase_id})
 
     await db.execute(text("""
         UPDATE purchase_orders

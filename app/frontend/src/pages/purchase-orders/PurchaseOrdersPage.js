@@ -15,6 +15,12 @@ import './PurchaseOrdersPage.css';
 
 const STATUSES = ['pending','rejected','new_order','emailed','in_progress','stuck','received','invoiced','closed'];
 
+const BUDGET_TREATMENT_LABELS = {
+  overhead:          'Overhead',
+  project_cost:      'Project cost',
+  consumable_usage:  'Consumable usage',
+};
+
 /* ---- List view ---- */
 function POList() {
   const { hasRole } = useAuth();
@@ -149,7 +155,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
   const [form, setForm] = useState({
     project_id: '', is_overhead: false, supplier_id: '', supplier_name_free: '',
     priority: 'normal', risk_level: '', urgency: 'normal', notes: '', placed_date: '',
-    items: [{ description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '', consumable_id: '' }],
+    items: [{ description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '', consumable_id: '', budget_treatment: '' }],
   });
 
   const { data: projects } = useQuery({
@@ -185,7 +191,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
 
   const addItem = () => setForm(f => ({
     ...f,
-    items: [...f.items, { description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '', consumable_id: '' }],
+    items: [...f.items, { description: '', product_id: '', product_url: '', quantity_ordered: 1, unit: 'each', unit_cost_estimate: '', consumable_id: '', budget_treatment: '' }],
   }));
 
   const removeItem = i => setForm(f => ({ ...f, items: f.items.filter((_, idx) => idx !== i) }));
@@ -217,6 +223,7 @@ function CreatePOModal({ open, onClose, onSuccess }) {
         unit:               it.unit              || 'each',
         unit_cost_estimate: it.unit_cost_estimate ? parseFloat(it.unit_cost_estimate) : null,
         consumable_id:      it.consumable_id ? parseInt(it.consumable_id) : null,
+        budget_treatment:   it.budget_treatment || null,
         notes:              it.notes             || null,
       })),
     });
@@ -353,6 +360,17 @@ function CreatePOModal({ open, onClose, onSuccess }) {
                   placeholder="0.00"
                   style={{ width: '100px' }}
                 />
+                <div className="field">
+                  {i === 0 && <label className="field-label">Budget treatment</label>}
+                  <select className="field-input" style={{ width: '150px' }} value={item.budget_treatment}
+                    onChange={e => setItem(i, 'budget_treatment', e.target.value)}
+                    title="How this item posts to the budget once received">
+                    <option value="">Auto (based on item)</option>
+                    <option value="project_cost">Project cost</option>
+                    <option value="overhead">Overhead</option>
+                    <option value="consumable_usage">Consumable usage</option>
+                  </select>
+                </div>
                 {form.items.length > 1 && (
                   <button type="button" className="remove-item-btn" onClick={() => removeItem(i)} title="Remove item">×</button>
                 )}
@@ -417,6 +435,13 @@ function PODetail() {
     onError: err => toast.error(err.response?.data?.detail || 'Failed to update quantity.'),
   });
 
+  const updateBudgetTreatmentMutation = useMutation({
+    mutationFn: ({ lineItemId, budget_treatment }) =>
+      api.patch(`/purchase-orders/${id}/items/${lineItemId}/budget-treatment`, { budget_treatment }),
+    onSuccess: () => { toast.success('Budget treatment updated.'); qc.invalidateQueries(['purchase-order', id]); },
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to update budget treatment.'),
+  });
+
   if (isLoading) return <LoadingState />;
   if (!po) return <EmptyState title="PO not found" action={<Button onClick={() => navigate('/purchase-orders')}>Back</Button>} />;
 
@@ -424,6 +449,7 @@ function PODetail() {
   const hasRemaining = po.line_items?.some(it => (it.quantity_received || 0) < it.quantity_ordered - 0.001);
   const canEditItems = po.status === 'pending' &&
     (user?.id === po.requested_by_id || hasRole('ops_manager', 'ceo', 'qm_director'));
+  const canEditBudget = user?.id === po.requested_by_id || hasRole('ops_manager', 'ceo', 'qm_director');
 
   return (
     <div>
@@ -496,6 +522,7 @@ function PODetail() {
                 <Th>Unit</Th>
                 <Th>Unit cost</Th>
                 <Th>Total</Th>
+                <Th>Budget</Th>
                 <Th>Received</Th>
               </tr>
             </thead>
@@ -525,6 +552,19 @@ function PODetail() {
                   <Td>{item.unit}</Td>
                   <Td>{formatCurrency(item.unit_cost_estimate)}</Td>
                   <Td>{formatCurrency((item.quantity_ordered || 0) * (item.unit_cost_estimate || 0))}</Td>
+                  <Td>
+                    {canEditBudget && (item.quantity_received || 0) === 0 ? (
+                      <BudgetTreatmentCell
+                        value={item.budget_treatment}
+                        saving={updateBudgetTreatmentMutation.isPending && updateBudgetTreatmentMutation.variables?.lineItemId === item.id}
+                        onSave={bt => updateBudgetTreatmentMutation.mutate({ lineItemId: item.id, budget_treatment: bt })}
+                      />
+                    ) : (
+                      <Badge variant={item.budget_treatment === 'overhead' ? 'warning' : item.budget_treatment === 'consumable_usage' ? 'info' : 'default'}>
+                        {BUDGET_TREATMENT_LABELS[item.budget_treatment] || 'Project cost'}
+                      </Badge>
+                    )}
+                  </Td>
                   <Td>
                     <span className={(item.quantity_received || 0) >= item.quantity_ordered - 0.001 ? 'text-success' : ''}>
                       {item.quantity_received || 0} / {item.quantity_ordered}
@@ -614,6 +654,38 @@ function EditableQty({ value, saving, onSave }) {
         autoFocus
       />
       <Button variant="ghost" size="sm" loading={saving} onClick={save}>Save</Button>
+      <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>×</Button>
+    </span>
+  );
+}
+
+/* ---- Editable budget treatment cell (locked once anything is received) ---- */
+function BudgetTreatmentCell({ value, saving, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState(value || 'project_cost');
+
+  if (!editing) {
+    return (
+      <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <Badge variant={value === 'overhead' ? 'warning' : value === 'consumable_usage' ? 'info' : 'default'}>
+          {BUDGET_TREATMENT_LABELS[value] || 'Project cost'}
+        </Badge>
+        <button type="button" className="item-link" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '0.75rem' }}
+          onClick={() => { setDraft(value || 'project_cost'); setEditing(true); }}>
+          edit
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+      <select className="field-input" style={{ width: '140px' }} value={draft} onChange={e => setDraft(e.target.value)} autoFocus>
+        <option value="project_cost">Project cost</option>
+        <option value="overhead">Overhead</option>
+        <option value="consumable_usage">Consumable usage</option>
+      </select>
+      <Button variant="ghost" size="sm" loading={saving} onClick={() => { onSave(draft); setEditing(false); }}>Save</Button>
       <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>×</Button>
     </span>
   );

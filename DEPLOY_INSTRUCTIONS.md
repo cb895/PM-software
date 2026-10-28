@@ -84,6 +84,7 @@ docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/10_add_consumable_units.sql
 docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/11_template_task_hierarchy.sql labpm_db:/11.sql
 docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/12_intern_logs.sql labpm_db:/12.sql
 docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/13_daily_log_revisions.sql labpm_db:/13.sql
+docker cp ~/MetabolicTrack_LabPM_v1.9.10/sql_patches/14_po_line_item_budget_treatment.sql labpm_db:/14.sql
 
 # Run them in order
 docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /01.sql
@@ -99,6 +100,7 @@ docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user l
 docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /11.sql
 docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /12.sql
 docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /13.sql
+docker compose -f ~/labpm-docker/docker-compose.yml exec db psql -U labpm_user labpm -f /14.sql
 ```
 
 > Patch 07 re-derives every employee's `pto_used`/`pto_pending` directly

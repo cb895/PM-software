@@ -315,19 +315,24 @@ async def get_overhead_entries(
     db   = Depends(get_db),
     user = Depends(require_budget_access),
 ):
-    """Returns all overhead budget entries — overhead PO payments and manual overhead expenses."""
+    """Returns all overhead budget entries — overhead PO receipts/payments and manual overhead expenses."""
     result = await db.execute(text("""
         SELECT
             be.id, be.entry_type, be.description,
             be.amount, be.entry_date, be.is_overhead,
             be.reference_type, be.reference_id,
-            po.po_number,
-            COALESCE(s.name, po.supplier_name_free) AS supplier
+            COALESCE(po_inv.po_number, po_rcpt.po_number) AS po_number,
+            COALESCE(s_inv.name, po_inv.supplier_name_free,
+                      s_rcpt.name, po_rcpt.supplier_name_free) AS supplier
         FROM budget_entries be
         LEFT JOIN invoices inv ON inv.id = be.reference_id
             AND be.reference_type = 'invoice'
-        LEFT JOIN purchase_orders po ON po.id = inv.po_id
-        LEFT JOIN suppliers s ON s.id = po.supplier_id
+        LEFT JOIN purchase_orders po_inv ON po_inv.id = inv.po_id
+        LEFT JOIN suppliers s_inv ON s_inv.id = po_inv.supplier_id
+        LEFT JOIN po_receipts pr ON pr.id = be.reference_id
+            AND be.reference_type = 'po_receipt'
+        LEFT JOIN purchase_orders po_rcpt ON po_rcpt.id = pr.po_id
+        LEFT JOIN suppliers s_rcpt ON s_rcpt.id = po_rcpt.supplier_id
         WHERE be.is_overhead = TRUE
         ORDER BY be.entry_date DESC
         LIMIT 200

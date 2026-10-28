@@ -176,7 +176,8 @@ CREATE TABLE supplier_credentials (
 CREATE TABLE purchase_orders (
     id                  SERIAL PRIMARY KEY,
     po_number           VARCHAR(30)     UNIQUE,             -- e.g. PO-2026-0042, assigned on approval
-    project_id          INTEGER         NOT NULL REFERENCES projects(id),
+    project_id          INTEGER         REFERENCES projects(id), -- NULL when is_overhead = TRUE
+    is_overhead         BOOLEAN         NOT NULL DEFAULT FALSE, -- non-project expense (e.g. office supplies)
     supplier_id         INTEGER         REFERENCES suppliers(id),
     supplier_name_free  VARCHAR(200),                       -- one-off supplier not in list
     requested_by        INTEGER         NOT NULL REFERENCES users(id),
@@ -210,6 +211,12 @@ CREATE TABLE po_line_items (
     unit_cost_estimate  NUMERIC(10,2),
     unit_cost_actual    NUMERIC(10,2),                      -- confirmed on receipt / invoice
     consumable_id       INTEGER,                                  -- linked if restocking inventory; FK added below once consumables exists
+    budget_treatment    VARCHAR(20)     NOT NULL DEFAULT 'project_cost'
+        CHECK (budget_treatment IN ('overhead', 'project_cost', 'consumable_usage')),
+        -- how this item posts to the budget once received:
+        --   overhead         -> overhead budget_entries row (no project)
+        --   project_cost     -> the PO's project budget_entries row
+        --   consumable_usage -> no posting here; cost follows stock usage instead
     notes               TEXT
 );
 
@@ -581,14 +588,15 @@ CREATE INDEX idx_phase_project ON project_phases(project_id);
 -- Budget entries — every cost event auto-posted from POs, daily logs, consumable usage
 CREATE TABLE budget_entries (
     id                  SERIAL PRIMARY KEY,
-    project_id          INTEGER         NOT NULL REFERENCES projects(id),
+    project_id          INTEGER         REFERENCES projects(id), -- NULL when is_overhead = TRUE
     phase_id            INTEGER         REFERENCES project_phases(id), -- NULL = not phase-specific
     entry_type          VARCHAR(30)     NOT NULL,               -- 'labour' | 'consumable' | 'purchase_order'
     reference_id        INTEGER,                                -- FK to source record
-    reference_type      VARCHAR(50),                            -- 'daily_log_entry' | 'consumable_transaction' | 'invoice'
+    reference_type      VARCHAR(50),                            -- 'daily_log_entry' | 'consumable_transaction' | 'invoice' | 'po_receipt'
     description         VARCHAR(300),
     amount              NUMERIC(12,2)   NOT NULL,
     entry_date          DATE            NOT NULL DEFAULT CURRENT_DATE,
+    is_overhead         BOOLEAN         NOT NULL DEFAULT FALSE,
     created_by          INTEGER         REFERENCES users(id),
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
@@ -1101,36 +1109,54 @@ CREATE TRIGGER trg_post_labour_budget
 CREATE OR REPLACE FUNCTION fn_post_po_budget()
 RETURNS TRIGGER AS $$
 DECLARE
-    v_project_id INTEGER;
-    v_phase_id   INTEGER;
+    v_project_id  INTEGER;
+    v_phase_id    INTEGER;
+    v_is_overhead BOOLEAN;
 BEGIN
     IF NEW.payment_status = 'paid' AND
        (OLD.payment_status IS NULL OR OLD.payment_status != 'paid') THEN
 
-        SELECT po.project_id INTO v_project_id
+        SELECT po.project_id, po.is_overhead
+        INTO v_project_id, v_is_overhead
         FROM purchase_orders po WHERE po.id = NEW.po_id;
 
-        SELECT id INTO v_phase_id
-        FROM project_phases
-        WHERE project_id = v_project_id AND is_active = TRUE
-          AND (start_date IS NULL OR start_date <= NEW.payment_date)
-          AND (end_date   IS NULL OR end_date   >= NEW.payment_date)
-        LIMIT 1;
+        IF v_is_overhead OR v_project_id IS NULL THEN
+            -- Overhead PO — post with is_overhead flag, no project
+            INSERT INTO budget_entries (
+                project_id, phase_id, entry_type,
+                reference_id, reference_type,
+                description, amount, entry_date, is_overhead
+            ) VALUES (
+                NULL, NULL, 'purchase_order',
+                NEW.id, 'invoice',
+                'Overhead PO payment: Invoice ' || COALESCE(NEW.invoice_number, NEW.id::TEXT),
+                NEW.amount_invoiced,
+                COALESCE(NEW.payment_date, CURRENT_DATE),
+                TRUE
+            );
+        ELSE
+            SELECT id INTO v_phase_id
+            FROM project_phases
+            WHERE project_id = v_project_id AND is_active = TRUE
+              AND (start_date IS NULL OR start_date <= COALESCE(NEW.payment_date, CURRENT_DATE))
+              AND (end_date   IS NULL OR end_date   >= COALESCE(NEW.payment_date, CURRENT_DATE))
+            LIMIT 1;
 
-        INSERT INTO budget_entries (
-            project_id, phase_id, entry_type,
-            reference_id, reference_type,
-            description, amount, entry_date
-        )
-        VALUES (
-            v_project_id, v_phase_id, 'purchase_order',
-            NEW.id, 'invoice',
-            'PO payment: Invoice ' || NEW.invoice_number,
-            NEW.amount_invoiced,
-            COALESCE(NEW.payment_date, CURRENT_DATE)
-        );
+            INSERT INTO budget_entries (
+                project_id, phase_id, entry_type,
+                reference_id, reference_type,
+                description, amount, entry_date, is_overhead
+            ) VALUES (
+                v_project_id, v_phase_id, 'purchase_order',
+                NEW.id, 'invoice',
+                'PO payment: Invoice ' || COALESCE(NEW.invoice_number, NEW.id::TEXT),
+                NEW.amount_invoiced,
+                COALESCE(NEW.payment_date, CURRENT_DATE),
+                FALSE
+            );
 
-        PERFORM fn_check_budget_alert(v_project_id, v_phase_id);
+            PERFORM fn_check_budget_alert(v_project_id, v_phase_id);
+        END IF;
     END IF;
     RETURN NEW;
 END;
