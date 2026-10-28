@@ -206,7 +206,7 @@ export default function Dashboard() {
                     <ProgressBar value={p.pct_spent} warning={p.budget_alert_threshold} />
                     <div className="budget-amounts">
                       <span>{formatCurrency(p.total_spent)}</span>
-                      <span className="text-muted">of {formatCurrency(p.budget_allocated)}</span>
+                      <span className="text-muted">of {formatCurrency(p.budget_allocated)} target</span>
                     </div>
                   </div>
                   {p.alert_triggered && <Badge variant="warning">{p.pct_spent}%</Badge>}

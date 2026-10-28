@@ -153,12 +153,12 @@ function BudgetOverview() {
       {activeTab === 'projects' && (
         <>
           <div className="stats-row">
-            <StatCard label="Total allocated" value={formatCurrency(totals.allocated)} />
-            <StatCard label="Total spent"     value={formatCurrency(totals.spent)}
+            <StatCard label="Total cost targets" value={formatCurrency(totals.allocated)} />
+            <StatCard label="Total cost"      value={formatCurrency(totals.spent)}
               warning={totals.allocated > 0 && totals.spent / totals.allocated > 0.8} />
-            <StatCard label="Remaining"       value={formatCurrency(totals.remaining)}
+            <StatCard label="Vs. target"      value={formatCurrency(totals.remaining)}
               accent={totals.remaining > 0} danger={totals.remaining < 0} />
-            <StatCard label="Budget alerts"   value={totals.alerts || 0}
+            <StatCard label="Over threshold"  value={totals.alerts || 0}
               danger={totals.alerts > 0} sub="projects at threshold" />
           </div>
 
@@ -248,11 +248,11 @@ function BudgetOverview() {
                       </div>
 
                       <div className="pbcard-progress">
-                        <div className="pbcard-pct">{parseFloat(p.pct_spent || 0).toFixed(1)}% used</div>
+                        <div className="pbcard-pct">{parseFloat(p.pct_spent || 0).toFixed(1)}% of target</div>
                         <ProgressBar value={p.pct_spent || 0} warning={p.budget_alert_threshold || 80} danger={100} />
                         <div className="pbcard-amounts">
-                          <span>{formatCurrency(p.total_spent)} spent</span>
-                          <span style={{ color: 'var(--text-muted)' }}>of {formatCurrency(p.budget_allocated)}</span>
+                          <span>{formatCurrency(p.total_spent)} in costs</span>
+                          <span style={{ color: 'var(--text-muted)' }}>of {formatCurrency(p.budget_allocated)} target</span>
                         </div>
                       </div>
 
@@ -293,7 +293,7 @@ function BudgetOverview() {
                         <Button variant="secondary" size="sm"
                           style={{ marginTop: '0.75rem', width: '100%' }}
                           onClick={() => setShowSetBudget(p)}>
-                          Set budget
+                          Set cost target
                         </Button>
                       )}
                     </Card>
@@ -500,13 +500,13 @@ function SetBudgetModal({ project, onClose, onSuccess }) {
 
   const mutation = useMutation({
     mutationFn: data => api.patch(`/budget/projects/${project.project_id}`, data),
-    onSuccess:  ()   => { toast.success('Budget updated.'); onSuccess(); },
-    onError:    err  => toast.error(err.response?.data?.detail || 'Failed to update budget.'),
+    onSuccess:  ()   => { toast.success('Cost target updated.'); onSuccess(); },
+    onError:    err  => toast.error(err.response?.data?.detail || 'Failed to update cost target.'),
   });
 
   const handleSubmit = e => {
     e.preventDefault();
-    if (!budget) { toast.error('Enter a budget amount.'); return; }
+    if (!budget) { toast.error('Enter a cost target.'); return; }
     mutation.mutate({
       budget_allocated:       parseFloat(budget),
       hourly_rate:            rate ? parseFloat(rate) : undefined,
@@ -515,21 +515,22 @@ function SetBudgetModal({ project, onClose, onSuccess }) {
   };
 
   return (
-    <Modal open={true} onClose={onClose} title={`Set budget — ${project?.project_code}`} size="sm">
+    <Modal open={true} onClose={onClose} title={`Set cost target — ${project?.project_code}`} size="sm">
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <Input label="Total budget ($) *" type="number" min="0" step="0.01"
+        <Input label="Cost target ($) *" type="number" min="0" step="0.01"
           value={budget} onChange={e => setBudget(e.target.value)}
-          placeholder="e.g. 150000" />
+          placeholder="e.g. 150000"
+          hint="Costs are tracked as they're added to this project — this is just a reference point for % of target and the threshold alert, not a cap." />
         <Input label="Hourly labour rate ($/hr)" type="number" min="0" step="0.01"
           value={rate} onChange={e => setRate(e.target.value)}
           placeholder="e.g. 85.00"
           hint="Used to calculate labour cost from daily log hours" />
         <Input label="Alert threshold (%)" type="number" min="1" max="100"
           value={threshold} onChange={e => setThreshold(e.target.value)}
-          hint="Send alert when spend reaches this % of budget" />
+          hint="Flag this project when its cost reaches this % of target" />
         <div className="modal-footer">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary" loading={mutation.isPending}>Save budget</Button>
+          <Button type="submit" variant="primary" loading={mutation.isPending}>Save cost target</Button>
         </div>
       </form>
     </Modal>
@@ -546,13 +547,13 @@ function SetPhaseBudgetModal({ phase, onClose, onSuccess }) {
 
   const mutation = useMutation({
     mutationFn: data => api.patch(`/budget/phases/${phase.phase_id}`, data),
-    onSuccess:  ()   => { toast.success('Phase budget updated.'); onSuccess(); },
-    onError:    err  => toast.error(err.response?.data?.detail || 'Failed to update phase budget.'),
+    onSuccess:  ()   => { toast.success('Phase cost target updated.'); onSuccess(); },
+    onError:    err  => toast.error(err.response?.data?.detail || 'Failed to update phase cost target.'),
   });
 
   const handleSubmit = e => {
     e.preventDefault();
-    if (!budget) { toast.error('Enter a budget amount.'); return; }
+    if (!budget) { toast.error('Enter a cost target.'); return; }
     mutation.mutate({
       budget_allocated:       parseFloat(budget),
       hourly_rate:            rate ? parseFloat(rate) : undefined,
@@ -561,18 +562,19 @@ function SetPhaseBudgetModal({ phase, onClose, onSuccess }) {
   };
 
   return (
-    <Modal open={true} onClose={onClose} title={`Edit phase budget — ${phase?.phase_name}`} size="sm">
+    <Modal open={true} onClose={onClose} title={`Edit phase cost target — ${phase?.phase_name}`} size="sm">
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <Input label="Phase budget ($) *" type="number" min="0" step="0.01"
+        <Input label="Phase cost target ($) *" type="number" min="0" step="0.01"
           value={budget} onChange={e => setBudget(e.target.value)}
-          placeholder="e.g. 40000" />
+          placeholder="e.g. 40000"
+          hint="Costs are tracked as they're added to this phase — this is a reference point, not a cap." />
         <Input label="Hourly labour rate ($/hr)" type="number" min="0" step="0.01"
           value={rate} onChange={e => setRate(e.target.value)}
           placeholder="Leave blank to use the project's rate"
           hint="Overrides the project's rate for labour logged against this phase" />
         <Input label="Alert threshold (%)" type="number" min="1" max="100"
           value={threshold} onChange={e => setThreshold(e.target.value)}
-          hint="Send alert when spend reaches this % of the phase budget" />
+          hint="Flag this phase when its cost reaches this % of target" />
         <div className="modal-footer">
           <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
           <Button type="submit" variant="primary" loading={mutation.isPending}>Save</Button>
@@ -625,7 +627,7 @@ function BudgetDetail() {
             <Button variant="secondary" onClick={() => navigate('/budget')}>← Back</Button>
             {canEdit && (
               <Button variant="primary" onClick={() => setShowEditProject(true)}>
-                Edit budget
+                Edit cost target
               </Button>
             )}
           </div>
@@ -633,17 +635,17 @@ function BudgetDetail() {
       />
 
       <div className="stats-row">
-        <StatCard label="Allocated" value={formatCurrency(detail.budget_allocated)} />
-        <StatCard label="Spent" value={formatCurrency(detail.total_spent)}
+        <StatCard label="Target" value={formatCurrency(detail.budget_allocated)} />
+        <StatCard label="Cost" value={formatCurrency(detail.total_spent)}
           warning={detail.budget_allocated > 0 && detail.pct_spent / 100 > 0.8} />
-        <StatCard label="Remaining" value={formatCurrency(detail.budget_remaining)}
+        <StatCard label="Vs. target" value={formatCurrency(detail.budget_remaining)}
           accent={detail.budget_remaining > 0} danger={detail.budget_remaining < 0} />
-        <StatCard label="% used" value={`${parseFloat(detail.pct_spent || 0).toFixed(1)}%`}
+        <StatCard label="% of target" value={`${parseFloat(detail.pct_spent || 0).toFixed(1)}%`}
           danger={detail.alert_triggered} />
       </div>
 
       <Card style={{ marginBottom: '1.25rem' }}>
-        <CardHeader title="Spend breakdown" />
+        <CardHeader title="Cost breakdown" />
         <ProgressBar value={detail.pct_spent || 0}
           warning={detail.budget_alert_threshold || 80} danger={100} />
         <div className="pbcard-breakdown" style={{ marginTop: '0.75rem' }}>

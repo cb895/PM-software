@@ -111,7 +111,7 @@ async def update_project_budget(
         f"UPDATE projects SET {set_clause}, updated_at = NOW() WHERE id = :id"
     ), data)
     await db.commit()
-    return {"message": "Project budget updated."}
+    return {"message": "Project cost target updated."}
 
 
 @router.get("/projects/{project_id}")
@@ -169,7 +169,7 @@ async def update_phase_budget(
         f"UPDATE project_phases SET {set_clause} WHERE id = :id"
     ), data)
     await db.commit()
-    return {"message": "Phase budget updated."}
+    return {"message": "Phase cost target updated."}
 
 
 @router.post("/entries/manual")
