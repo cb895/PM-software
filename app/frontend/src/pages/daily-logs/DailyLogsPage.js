@@ -252,6 +252,7 @@ function DailyLogsList() {
 function ProjectEntry({ entry, idx, projects, consumables, onUpdate, onRemove, onSave, canRemove, saving,
   onAddTask, onUpdateTask, onRemoveTask, onAddConsumable, onUpdateConsumable, onRemoveConsumable, onConsumableAdded }) {
   const [section, setSection] = useState('progress');
+  const [showNewConsumable, setShowNewConsumable] = useState(false);
 
   const { data: projectTasks } = useQuery({
     queryKey: ['project-tasks', entry.project_id],
