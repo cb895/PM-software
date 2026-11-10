@@ -826,7 +826,7 @@ function DelayProposalPanel() {
       qc.invalidateQueries(['delay-proposals']);
       qc.invalidateQueries(['tasks']);
     },
-    onError: () => toast.error('Failed to approve.'),
+    onError: err => toast.error(err.response?.data?.detail || 'Failed to approve.'),
   });
 
   const dismissMutation = useMutation({

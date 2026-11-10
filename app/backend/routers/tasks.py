@@ -96,6 +96,22 @@ async def create_task(
     db   = Depends(get_db),
     user = Depends(require_task_editor),
 ):
+    if body.parent_task_id is not None:
+        parent_result = await db.execute(text(
+            "SELECT title, planned_start, planned_end FROM tasks WHERE id = :id"
+        ), {"id": body.parent_task_id})
+        parent = parent_result.mappings().one_or_none()
+        if not parent:
+            raise HTTPException(400, "Parent task not found.")
+        if parent["planned_start"] and body.planned_start and body.planned_start < parent["planned_start"]:
+            raise HTTPException(400,
+                f"Sub-task dates can't start before parent task '{parent['title']}' "
+                f"(starts {parent['planned_start']}).")
+        if parent["planned_end"] and body.planned_end and body.planned_end > parent["planned_end"]:
+            raise HTTPException(400,
+                f"Sub-task dates can't end after parent task '{parent['title']}' "
+                f"(ends {parent['planned_end']}).")
+
     result = await db.execute(text("""
         INSERT INTO tasks
             (project_id, created_by, title, description, task_group,
@@ -186,13 +202,27 @@ async def approve_delay_proposal(
     """), {"id": proposal_id})
     row = result.one_or_none()
     if not row:
-        from fastapi import HTTPException
         raise HTTPException(404, "Proposal not found or already reviewed.")
 
     task_id, proposed_end = row
 
-    current = await db.execute(text("SELECT status FROM tasks WHERE id = :id"), {"id": task_id})
-    current_status = current.scalar_one()
+    current = await db.execute(text(
+        "SELECT status, parent_task_id FROM tasks WHERE id = :id"
+    ), {"id": task_id})
+    current_status, parent_task_id = current.one()
+
+    # A delayed sub-task can't be pushed past its parent's own end date —
+    # that would let the two schedules drift apart. Reschedule the parent
+    # first (or dismiss this proposal) if that's actually needed.
+    if parent_task_id is not None:
+        parent_result = await db.execute(text(
+            "SELECT title, planned_end FROM tasks WHERE id = :id"
+        ), {"id": parent_task_id})
+        parent = parent_result.mappings().one_or_none()
+        if parent and parent["planned_end"] and proposed_end > parent["planned_end"]:
+            raise HTTPException(400,
+                f"This delay would push the sub-task past its parent task '{parent['title']}' "
+                f"(ends {parent['planned_end']}). Reschedule the parent task first.")
 
     # Update task planned_end
     await db.execute(text("""
@@ -561,12 +591,12 @@ async def update_task(
         raise HTTPException(400, "No fields to update.")
 
     task_result = await db.execute(text(
-        "SELECT status, project_id FROM tasks WHERE id = :id"
+        "SELECT status, project_id, planned_start, planned_end, parent_task_id FROM tasks WHERE id = :id"
     ), {"id": task_id})
-    task_row = task_result.one_or_none()
+    task_row = task_result.mappings().one_or_none()
     if not task_row:
         raise HTTPException(404, "Task not found.")
-    old_status, project_id = task_row
+    old_status, project_id = task_row["status"], task_row["project_id"]
 
     if update_parent and new_parent_task_id is not None:
         if new_parent_task_id == task_id:
@@ -588,6 +618,43 @@ async def update_task(
         ), {"id": task_id})
         if children_result.one_or_none():
             raise HTTPException(400, "This task already has its own sub-tasks and can't be made a sub-task itself.")
+
+    # A sub-task's schedule must stay inside its parent's — never let the two
+    # drift apart. Check both directions: editing a sub-task's own dates
+    # against its parent's window, and editing a parent's dates against
+    # every existing sub-task's window.
+    if "planned_start" in data or "planned_end" in data:
+        effective_start = data.get("planned_start", task_row["planned_start"])
+        effective_end   = data.get("planned_end",   task_row["planned_end"])
+        effective_parent_id = new_parent_task_id if update_parent else task_row["parent_task_id"]
+
+        if effective_parent_id is not None:
+            parent_result = await db.execute(text(
+                "SELECT title, planned_start, planned_end FROM tasks WHERE id = :id"
+            ), {"id": effective_parent_id})
+            parent = parent_result.mappings().one_or_none()
+            if parent:
+                if parent["planned_start"] and effective_start and effective_start < parent["planned_start"]:
+                    raise HTTPException(400,
+                        f"Sub-task dates can't start before parent task '{parent['title']}' "
+                        f"(starts {parent['planned_start']}).")
+                if parent["planned_end"] and effective_end and effective_end > parent["planned_end"]:
+                    raise HTTPException(400,
+                        f"Sub-task dates can't end after parent task '{parent['title']}' "
+                        f"(ends {parent['planned_end']}).")
+
+        children_result = await db.execute(text(
+            "SELECT title, planned_start, planned_end FROM tasks WHERE parent_task_id = :id"
+        ), {"id": task_id})
+        for child in children_result.mappings():
+            if effective_start and child["planned_end"] and child["planned_end"] < effective_start:
+                raise HTTPException(400,
+                    f"Can't move the start date past sub-task '{child['title']}' "
+                    f"(ends {child['planned_end']}). Reschedule its sub-tasks first.")
+            if effective_end and child["planned_end"] and child["planned_end"] > effective_end:
+                raise HTTPException(400,
+                    f"Can't move the end date before sub-task '{child['title']}' "
+                    f"(ends {child['planned_end']}). Reschedule its sub-tasks first.")
 
     if data:
         # Auto-set actual dates based on status
