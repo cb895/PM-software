@@ -40,6 +40,7 @@ function TasksMain() {
   const [view, setView]               = useState('list');
   const [projectFilter, setProject]   = useState('');
   const [statusFilter, setStatus]     = useState('');
+  const [search, setSearch]           = useState('');
   const [showCreate, setShowCreate]   = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const qc = useQueryClient();
@@ -59,17 +60,29 @@ function TasksMain() {
     }).then(r => r.data),
   });
 
+  const filteredTasks = useMemo(() => {
+    if (!search) return tasks || [];
+    const q = search.toLowerCase();
+    return (tasks || []).filter(t =>
+      t.title?.toLowerCase().includes(q) ||
+      t.task_group?.toLowerCase().includes(q) ||
+      t.project_code?.toLowerCase().includes(q) ||
+      t.project_name?.toLowerCase().includes(q) ||
+      t.assignees?.some(a => a.toLowerCase().includes(q))
+    );
+  }, [tasks, search]);
+
   const stats = useMemo(() => ({
-    total:       tasks?.length ?? 0,
-    complete:    tasks?.filter(t => t.status === 'complete').length    ?? 0,
-    in_progress: tasks?.filter(t => t.status === 'in_progress').length ?? 0,
-    blocked:     tasks?.filter(t => t.status === 'blocked').length     ?? 0,
-    milestones:  tasks?.filter(t => t.is_milestone).length             ?? 0,
-  }), [tasks]);
+    total:       filteredTasks.length,
+    complete:    filteredTasks.filter(t => t.status === 'complete').length,
+    in_progress: filteredTasks.filter(t => t.status === 'in_progress').length,
+    blocked:     filteredTasks.filter(t => t.status === 'blocked').length,
+    milestones:  filteredTasks.filter(t => t.is_milestone).length,
+  }), [filteredTasks]);
 
   // Only parent tasks for Gantt (exclude subtasks)
   const parentTasks = useMemo(() =>
-    (tasks || []).filter(t => !t.parent_task_id), [tasks]);
+    filteredTasks.filter(t => !t.parent_task_id), [filteredTasks]);
 
   return (
     <div>
@@ -103,6 +116,12 @@ function TasksMain() {
       {/* Filters */}
       <Card className="task-filters">
         <div className="filter-row">
+          <input
+            className="field-input filter-search"
+            placeholder="Search task, group, project, assignee…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
           <div className="field">
             <select className="field-input" value={projectFilter}
               onChange={e => setProject(e.target.value)}>
@@ -120,23 +139,24 @@ function TasksMain() {
               <option value="complete">Complete</option>
             </select>
           </div>
-          {(projectFilter || statusFilter) && (
+          {(projectFilter || statusFilter || search) && (
             <Button variant="ghost" size="sm"
-              onClick={() => { setProject(''); setStatus(''); }}>Clear</Button>
+              onClick={() => { setProject(''); setStatus(''); setSearch(''); }}>Clear</Button>
           )}
         </div>
       </Card>
 
       {showTemplates && <TemplatesPanel onClose={() => setShowTemplates(false)} />}
       <DelayProposalPanel />
-      {isLoading ? <LoadingState /> : !tasks?.length ? (
+      {isLoading ? <LoadingState /> : !filteredTasks.length ? (
         <EmptyState title="No tasks found"
+          description={search ? `No results for "${search}".` : undefined}
           action={hasRole('ops_manager', 'ceo') && (
             <Button variant="primary" onClick={() => setShowCreate(true)}>Create task</Button>
           )}
         />
       ) : view === 'list' ? (
-        <TaskList tasks={tasks} onRefresh={() => qc.invalidateQueries(['tasks'])} />
+        <TaskList tasks={filteredTasks} onRefresh={() => qc.invalidateQueries(['tasks'])} />
       ) : (
         <GanttChart tasks={parentTasks} />
       )}
@@ -161,14 +181,46 @@ function TaskList({ tasks, onRefresh }) {
   const [editTask, setEditTask] = useState(null);
   const qc = useQueryClient();
 
-  // Group by task_group
+  // Group by project — ordered alphabetically by project code, not by date.
+  // Within a project, parent tasks are sorted by task_group then title, and
+  // each parent's sub-tasks are kept directly beneath it (sorted the same
+  // way) rather than scattered by their own dates.
   const grouped = useMemo(() => {
     const map = {};
     tasks.forEach(t => {
-      const g = t.task_group || 'Ungrouped';
-      if (!map[g]) map[g] = [];
-      map[g].push(t);
+      const key = t.project_code || 'No project';
+      if (!map[key]) map[key] = { project_name: t.project_name, tasks: [] };
+      map[key].tasks.push(t);
     });
+
+    const sortFn = (a, b) => {
+      const ga = a.task_group || '', gb = b.task_group || '';
+      return ga !== gb ? ga.localeCompare(gb) : (a.title || '').localeCompare(b.title || '');
+    };
+
+    Object.values(map).forEach(group => {
+      const byParent = {};
+      group.tasks.forEach(t => {
+        (byParent[t.parent_task_id] = byParent[t.parent_task_id] || []).push(t);
+      });
+      const tops = (byParent[null] || []).sort(sortFn);
+      const topIds = new Set(tops.map(t => t.id));
+
+      const ordered = [];
+      tops.forEach(top => {
+        ordered.push(top);
+        ordered.push(...(byParent[top.id] || []).sort(sortFn));
+      });
+      // Sub-tasks whose parent got filtered out of this view (e.g. by
+      // search or status) still need to show up somewhere.
+      Object.entries(byParent).forEach(([pid, children]) => {
+        if (pid !== 'null' && !topIds.has(Number(pid))) {
+          ordered.push(...children.sort(sortFn));
+        }
+      });
+      group.tasks = ordered;
+    });
+
     return map;
   }, [tasks]);
 
@@ -180,18 +232,20 @@ function TaskList({ tasks, onRefresh }) {
 
   return (
     <div className="task-list-groups">
-      {Object.entries(grouped).map(([group, groupTasks]) => (
-        <div key={group} className="task-group">
+      {Object.entries(grouped)
+        .sort(([codeA], [codeB]) => codeA.localeCompare(codeB))
+        .map(([code, { project_name, tasks: groupTasks }]) => (
+        <div key={code} className="task-group">
           <div className="task-group-header">
-            <h3 className="task-group-title">{group}</h3>
+            <h3 className="task-group-title">{code} — {project_name}</h3>
             <span className="task-group-count">{groupTasks.length} tasks</span>
           </div>
 
           <Table>
             <thead>
               <tr>
-                <Th>Task</Th>
                 <Th>Project</Th>
+                <Th>Task</Th>
                 <Th>Assignees</Th>
                 <Th>Status</Th>
                 <Th>Priority</Th>
@@ -204,6 +258,7 @@ function TaskList({ tasks, onRefresh }) {
               {groupTasks.map(task => (
                 <React.Fragment key={task.id}>
                   <tr className={task.is_milestone ? 'milestone-row' : ''}>
+                    <Td><Badge variant="muted">{task.project_code}</Badge></Td>
                     <Td>
                       <div className="task-title-cell">
                         {task.is_milestone && <span className="milestone-star" title="Milestone">★</span>}
@@ -213,7 +268,6 @@ function TaskList({ tasks, onRefresh }) {
                         </span>
                       </div>
                     </Td>
-                    <Td><Badge variant="muted">{task.project_code}</Badge></Td>
                     <Td>
                       <div className="assignee-list">
                         {task.assignees?.map(a => (

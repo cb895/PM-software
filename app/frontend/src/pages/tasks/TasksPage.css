@@ -3,6 +3,7 @@
    ============================================================ */
 
 .task-filters { margin-bottom: 1.25rem; }
+.filter-search { max-width: 280px; }
 
 /* View toggle */
 .view-toggle {
