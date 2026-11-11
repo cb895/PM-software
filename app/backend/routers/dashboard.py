@@ -27,8 +27,9 @@ async def dashboard_stats(
              WHERE is_active = TRUE AND current_stock <= reorder_threshold) AS restock_flags,
             (SELECT COUNT(*) FROM projects
              WHERE is_active = TRUE) AS active_projects,
-            (SELECT COUNT(*) FROM missing_log_flags
-             WHERE resolved = FALSE) AS missing_logs
+            (SELECT COUNT(*) FROM missing_log_flags mlf
+             JOIN users u ON u.id = mlf.user_id
+             WHERE mlf.resolved = FALSE AND u.is_active = TRUE) AS missing_logs
     """))
     row = dict(result.mappings().one())
     # Missing-logs alert is ops_manager/ceo only per PERMISSIONS.md.

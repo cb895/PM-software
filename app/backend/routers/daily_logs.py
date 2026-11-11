@@ -110,7 +110,7 @@ async def missing_logs(db = Depends(get_db), user = Depends(require_roles("ops_m
         SELECT mlf.id AS flag_id, u.id AS user_id, u.full_name, mlf.missing_date
         FROM missing_log_flags mlf
         JOIN users u ON u.id = mlf.user_id
-        WHERE mlf.resolved = FALSE
+        WHERE mlf.resolved = FALSE AND u.is_active = TRUE
         ORDER BY mlf.missing_date, u.full_name
     """))
     return [dict(r) for r in result.mappings()]

@@ -5,11 +5,13 @@ import { useAuth } from '../../context/AuthContext';
 import {
   PageHeader, Card, CardHeader, Button, Input, Textarea,
   Badge, Table, Th, Td, EmptyState, LoadingState,
-  StatCard, Modal
+  StatCard, Modal, PriorityBadge
 } from '../../components/ui/UI';
 import { formatDate, formatHours } from '../../utils/format';
 import toast from 'react-hot-toast';
 import './HRPage.css';
+
+const TASK_STATUS_VARIANT = { not_started: 'muted', in_progress: 'accent', blocked: 'danger', complete: 'success' };
 
 const LEAVE_TYPES = ['vacation','sick','personal','bereavement','medical','unpaid'];
 const LEAVE_COLORS = {
@@ -272,7 +274,7 @@ function TeamCalendar() {
   const prevMonth = () => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1));
   const nextMonth = () => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1));
 
-  const EVENT_TYPE_COLOR = { team:'var(--accent)', one_on_one:'var(--info)', private:'var(--text-muted)' };
+  const EVENT_TYPE_COLOR = { team:'var(--accent)', one_on_one:'var(--info)', private:'var(--text-muted)', task:'var(--warning)' };
 
   return (
     <div>
@@ -287,6 +289,15 @@ function TeamCalendar() {
         <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
           + Add event
         </Button>
+      </div>
+
+      <div className="calendar-legend">
+        {Object.entries(EVENT_TYPE_COLOR).map(([type, color]) => (
+          <span key={type} className="calendar-legend-item">
+            <span className="calendar-legend-dot" style={{ background: color }} />
+            {type === 'task' ? 'Assigned task' : type.replace(/_/g, ' ')}
+          </span>
+        ))}
       </div>
 
       {isLoading ? <LoadingState /> : (
@@ -332,13 +343,31 @@ function TeamCalendar() {
         title={selectedEvent?.title} size="sm">
         {selectedEvent && (
           <div style={{ display:'flex', flexDirection:'column', gap:'0.875rem' }}>
-            <div style={{ display:'flex', gap:'0.5rem' }}>
-              <Badge variant={selectedEvent.event_type==='team'?'accent':selectedEvent.event_type==='one_on_one'?'info':'muted'}>
-                {selectedEvent.event_type?.replace(/_/g,' ')}
-              </Badge>
-              {selectedEvent.all_day && <Badge variant="muted">All day</Badge>}
+            <div style={{ display:'flex', gap:'0.5rem', flexWrap:'wrap' }}>
+              {selectedEvent.event_type === 'task' ? (
+                <>
+                  <Badge variant="warning">Assigned task</Badge>
+                  <Badge variant="muted">{selectedEvent.project_code}</Badge>
+                  <Badge variant={TASK_STATUS_VARIANT[selectedEvent.status] || 'muted'}>
+                    {selectedEvent.status?.replace(/_/g,' ')}
+                  </Badge>
+                  <PriorityBadge priority={selectedEvent.priority} />
+                </>
+              ) : (
+                <>
+                  <Badge variant={selectedEvent.event_type==='team'?'accent':selectedEvent.event_type==='one_on_one'?'info':'muted'}>
+                    {selectedEvent.event_type?.replace(/_/g,' ')}
+                  </Badge>
+                  {selectedEvent.all_day && <Badge variant="muted">All day</Badge>}
+                </>
+              )}
             </div>
-            {!selectedEvent.all_day && (
+            {selectedEvent.event_type === 'task' ? (
+              <div className="text2">
+                {formatDate(selectedEvent.start_time)} — {formatDate(selectedEvent.end_time)}
+                {selectedEvent.project_name && <> · {selectedEvent.project_name}</>}
+              </div>
+            ) : !selectedEvent.all_day && (
               <div className="text2">
                 {formatDate(selectedEvent.start_time, 'MMM d, yyyy h:mm a')} —{' '}
                 {formatDate(selectedEvent.end_time, 'h:mm a')}
@@ -354,7 +383,9 @@ function TeamCalendar() {
             )}
             {selectedEvent.participants?.length > 0 && (
               <div>
-                <div className="meta-label" style={{ marginBottom:'4px' }}>Participants</div>
+                <div className="meta-label" style={{ marginBottom:'4px' }}>
+                  {selectedEvent.event_type === 'task' ? 'Assignees' : 'Participants'}
+                </div>
                 <div style={{ display:'flex', gap:'4px', flexWrap:'wrap' }}>
                   {selectedEvent.participants.map(p => (
                     <span key={p} className="participant-chip">{p}</span>
@@ -362,10 +393,17 @@ function TeamCalendar() {
                 </div>
               </div>
             )}
-            <div className="text2" style={{ fontSize:'11px' }}>
-              Created by {selectedEvent.created_by_name}
-            </div>
-            {(selectedEvent.created_by_name === me.full_name || me.role === 'ops_manager') && !selectedEvent.related_leave_id && (
+            {selectedEvent.event_type === 'task' ? (
+              <div className="text2" style={{ fontSize:'11px' }}>
+                Manage this task's status and dates from the Tasks page.
+              </div>
+            ) : (
+              <div className="text2" style={{ fontSize:'11px' }}>
+                Created by {selectedEvent.created_by_name}
+              </div>
+            )}
+            {selectedEvent.event_type !== 'task' &&
+             (selectedEvent.created_by_name === me.full_name || me.role === 'ops_manager') && !selectedEvent.related_leave_id && (
               <div className="modal-footer">
                 <Button variant="danger" size="sm"
                   onClick={() => deleteMutation.mutate(selectedEvent.id)}
@@ -384,7 +422,7 @@ function TeamCalendar() {
 function CreateEventModal({ open, onClose, onSuccess }) {
   const { data: users } = useQuery({
     queryKey: ['all-users'],
-    queryFn: () => api.get('/auth/users/all').then(r => r.data),
+    queryFn: () => api.get('/auth/users/all').then(r => r.data.filter(u => u.is_active)),
     enabled: open,
   });
 
@@ -742,8 +780,13 @@ function LeaveBalances() {
               const pctUsed   = b.pto_total > 0 ? ((b.pto_used/b.pto_total)*100) : 0;
               const pctPending= b.pto_total > 0 ? ((b.pto_pending/b.pto_total)*100) : 0;
               return (
-                <tr key={b.user_id}>
-                  <Td><strong>{b.full_name}</strong></Td>
+                <tr key={b.user_id} style={b.is_active === false ? { opacity: 0.6 } : undefined}>
+                  <Td>
+                    <strong>{b.full_name}</strong>
+                    {b.is_active === false && (
+                      <span style={{ marginLeft: '0.5rem' }}><Badge variant="muted">Inactive</Badge></span>
+                    )}
+                  </Td>
                   <Td>{b.pto_total}d</Td>
                   <Td>{b.pto_used}d</Td>
                   <Td>{b.pto_pending > 0 ? <Badge variant="warning">{b.pto_pending}d</Badge> : '—'}</Td>

@@ -409,10 +409,10 @@ async def get_balances(
 ):
     if user.role == "ops_manager":
         result = await db.execute(text("""
-            SELECT lb.*, u.full_name, u.email,
+            SELECT lb.*, u.full_name, u.email, u.is_active,
                    GREATEST(lb.pto_total - lb.pto_used - lb.pto_pending, 0) AS pto_available
             FROM leave_balances lb JOIN users u ON u.id = lb.user_id
-            WHERE lb.year = :yr ORDER BY u.full_name
+            WHERE lb.year = :yr ORDER BY u.is_active DESC, u.full_name
         """), {"yr": year})
     else:
         result = await db.execute(text("""
@@ -513,7 +513,68 @@ async def get_calendar_events(
         GROUP BY ce.id, u.full_name
         ORDER BY ce.start_time
     """), params)
-    return [dict(r) for r in result.mappings()]
+    events = [dict(r) for r in result.mappings()]
+
+    # Task work-plan entries — each assigned task shows up on its
+    # assignees' calendars for its planned date range. Computed live from
+    # the task tracker rather than stored, so it's always in sync with
+    # task dates/assignees without needing to touch every task-mutation
+    # endpoint. Ops manager and CEO see the whole team's plan; everyone
+    # else sees only tasks they're personally assigned to.
+    task_params = {"uid": user.id}
+    task_where  = ["t.planned_start IS NOT NULL", "t.planned_end IS NOT NULL"]
+    if start:
+        task_where.append("t.planned_end >= :start")
+        task_params["start"] = start
+    if end:
+        task_where.append("t.planned_start <= :end")
+        task_params["end"] = end
+    if user.role not in ("ops_manager", "ceo"):
+        task_where.append("""EXISTS (
+            SELECT 1 FROM task_assignees ta2
+            WHERE ta2.task_id = t.id AND ta2.user_id = :uid
+        )""")
+
+    task_result = await db.execute(text(f"""
+        SELECT
+            t.id, t.title, t.status, t.priority,
+            t.planned_start, t.planned_end,
+            p.code AS project_code, p.name AS project_name,
+            ARRAY_AGG(DISTINCT u2.full_name)
+                FILTER (WHERE u2.id IS NOT NULL) AS assignees
+        FROM tasks t
+        JOIN projects p ON p.id = t.project_id
+        LEFT JOIN task_assignees ta ON ta.task_id = t.id
+        LEFT JOIN users u2          ON u2.id = ta.user_id
+        WHERE {" AND ".join(task_where)}
+        GROUP BY t.id, p.code, p.name
+        ORDER BY t.planned_start
+    """), task_params)
+
+    for r in task_result.mappings():
+        events.append({
+            "id":               f"task-{r['id']}",
+            "title":            r["title"],
+            "description":      None,
+            "event_type":       "task",
+            "start_time":       r["planned_start"],
+            "end_time":         r["planned_end"],
+            "all_day":          True,
+            "location":         None,
+            "is_recurring":     False,
+            "recurrence_rule":  None,
+            "related_leave_id": None,
+            "created_at":       None,
+            "created_by_name":  None,
+            "participants":     r["assignees"] or [],
+            "task_id":          r["id"],
+            "project_code":     r["project_code"],
+            "project_name":     r["project_name"],
+            "status":           r["status"],
+            "priority":         r["priority"],
+        })
+
+    return events
 
 
 @router.post("/calendar", status_code=status.HTTP_201_CREATED)
