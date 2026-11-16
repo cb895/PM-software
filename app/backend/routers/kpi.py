@@ -34,7 +34,10 @@ async def kpi_summary(
     user   = Depends(require_kpi_access),
 ):
     params = {}
-    where  = ["kt.is_active = TRUE"]
+    # A deactivated employee's past KPI actuals/targets stay in the
+    # database but drop off the live dashboard — team-wide targets with
+    # no specific employee (user_id IS NULL) are unaffected.
+    where  = ["kt.is_active = TRUE", "(COALESCE(ka.user_id, kt.user_id) IS NULL OR u.is_active = TRUE)"]
     if period:
         where.append("kt.period = :period")
         params["period"] = period
@@ -79,6 +82,7 @@ async def list_targets(
         LEFT JOIN users u    ON u.id = kt.user_id
         LEFT JOIN projects p ON p.id = kt.project_id
         WHERE kt.is_active = TRUE
+          AND (kt.user_id IS NULL OR u.is_active = TRUE)
         ORDER BY kt.period, kt.metric_type
     """))
     return [dict(r) for r in result.mappings()]
