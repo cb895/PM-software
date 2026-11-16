@@ -49,21 +49,6 @@ CREATE TABLE leave_balances (
     UNIQUE (user_id, year)
 );
 
--- ---- Work schedule overrides ----
--- Patricia's Tuesdays off by default; this table stores per-week overrides
-
-CREATE TABLE work_schedule_overrides (
-    id              SERIAL PRIMARY KEY,
-    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    week_start      DATE NOT NULL,          -- Monday of the week
-    regular_day_off INTEGER NOT NULL,       -- 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat
-    override_day_off INTEGER,               -- NULL = keep regular day off; integer = move to this day
-    override_reason TEXT,
-    set_by          INTEGER REFERENCES users(id),
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (user_id, week_start)
-);
-
 -- ---- Time off requests ----
 
 CREATE TABLE leave_requests (
@@ -309,26 +294,8 @@ FROM users u
 WHERE u.is_active = TRUE
 ON CONFLICT (user_id, year) DO NOTHING;
 
--- Patricia's standing Tuesday schedule for the rest of 2026
--- Generate every Monday (week_start) from today through end of 2026
-INSERT INTO work_schedule_overrides (user_id, week_start, regular_day_off, override_day_off, override_reason, set_by)
-SELECT
-    (SELECT id FROM users WHERE email = 'pw@metabolictrack.com'),
-    d::DATE,
-    2,      -- Tuesday
-    NULL,   -- no override — use default Tuesday off
-    'Standing 4-day work week schedule',
-    (SELECT id FROM users WHERE email = 'cb@metabolictrack.com')
-FROM generate_series(
-    date_trunc('week', CURRENT_DATE)::DATE,
-    '2026-12-28'::DATE,
-    '7 days'::INTERVAL
-) d
-ON CONFLICT (user_id, week_start) DO NOTHING;
-
 -- =============================================================
 -- VERIFICATION
 -- =============================================================
 SELECT 'Leave balances seeded: ' || COUNT(*)::TEXT FROM leave_balances;
 SELECT 'Staff status rows: '     || COUNT(*)::TEXT FROM staff_status;
-SELECT 'PW schedule weeks: '     || COUNT(*)::TEXT FROM work_schedule_overrides;

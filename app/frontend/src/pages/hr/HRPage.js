@@ -28,7 +28,6 @@ const STATUS_COLORS = {
   off:       { label: 'Off',       color: 'var(--text-muted)', bg: 'var(--bg-raised)' },
   sick:      { label: 'Sick',      color: 'var(--danger)',   bg: 'rgba(232,89,74,0.1)' },
 };
-const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 function initials(name) {
   return (name||'??').split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
@@ -48,15 +47,12 @@ function LeaveStatusBadge({ status }) {
    ============================================================ */
 export default function HRPage() {
   const [tab, setTab] = useState('board');
-  const { user, hasRole } = useAuth();
-  const canSeePwSchedule = hasRole('ops_manager') || user?.email === 'pw@metabolictrack.com';
 
   const tabs = [
     { id: 'board',    label: 'In / Out board' },
     { id: 'calendar', label: 'Team calendar' },
     { id: 'leave',    label: 'Time off requests' },
     { id: 'balances', label: 'Leave balances' },
-    ...(canSeePwSchedule ? [{ id: 'schedule', label: "Patricia's schedule" }] : []),
   ];
 
   return (
@@ -77,7 +73,6 @@ export default function HRPage() {
       {tab === 'calendar' && <TeamCalendar />}
       {tab === 'leave'    && <LeaveRequests />}
       {tab === 'balances' && <LeaveBalances />}
-      {tab === 'schedule' && canSeePwSchedule && <PatriciaSchedule />}
     </div>
   );
 }
@@ -829,118 +824,6 @@ function LeaveBalances() {
             <Button variant="secondary" onClick={() => setEditTarget(null)}>Cancel</Button>
             <Button variant="primary" loading={updateMutation.isPending}
               onClick={() => updateMutation.mutate({ userId: editTarget.user_id, pto_total: parseFloat(newTotal) })}>
-              Save
-            </Button>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  );
-}
-
-/* ============================================================
-   Patricia's Schedule — ops manager only
-   ============================================================ */
-function PatriciaSchedule() {
-  const qc = useQueryClient();
-  const [editWeek, setEditWeek] = useState(null);
-  const [overrideDay, setOverrideDay] = useState('');
-  const [overrideReason, setOverrideReason] = useState('');
-
-  const { data: schedule, isLoading } = useQuery({
-    queryKey: ['pw-schedule'],
-    queryFn: () => api.get('/hr/schedule/pw').then(r => r.data),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: data => api.patch('/hr/schedule/pw', data),
-    onSuccess: () => {
-      toast.success('Schedule updated.');
-      setEditWeek(null);
-      qc.invalidateQueries(['pw-schedule']);
-    },
-    onError: () => toast.error('Failed to update schedule.'),
-  });
-
-  if (isLoading) return <LoadingState />;
-
-  return (
-    <div>
-      <div style={{ background:'var(--bg-raised)', border:'1px solid var(--border)', borderRadius:'var(--radius-md)', padding:'0.875rem 1rem', marginBottom:'1.25rem', fontSize:'0.875rem', color:'var(--text-secondary)' }}>
-        Patricia works a 4-day week. Her day off defaults to <strong style={{ color:'var(--text-primary)' }}>Tuesday</strong> each week.
-        Either Patricia or Chris can override this to a different day for any given week.
-      </div>
-
-      <Card padding={false}>
-        <Table>
-          <thead>
-            <tr>
-              <Th>Week of</Th>
-              <Th>Day off</Th>
-              <Th>Override</Th>
-              <Th>Set by</Th>
-              <Th>Reason</Th>
-              <Th></Th>
-            </tr>
-          </thead>
-          <tbody>
-            {(schedule||[]).map(w => {
-              const effectiveDay = w.override_day_off !== null ? w.override_day_off : w.regular_day_off;
-              const isOverridden = w.override_day_off !== null;
-              return (
-                <tr key={w.id}>
-                  <Td>{formatDate(w.week_start, 'MMM d, yyyy')}</Td>
-                  <Td>
-                    <strong>{DAY_NAMES[w.regular_day_off]}</strong>
-                    <span style={{ color:'var(--text-muted)', fontSize:'11px' }}> (default)</span>
-                  </Td>
-                  <Td>
-                    {isOverridden
-                      ? <Badge variant="warning">→ {DAY_NAMES[effectiveDay]}</Badge>
-                      : <span style={{ color:'var(--text-muted)', fontSize:'12px' }}>No override</span>
-                    }
-                  </Td>
-                  <Td>{w.set_by_name || '—'}</Td>
-                  <Td><span style={{ fontSize:'0.8125rem', color:'var(--text-secondary)' }}>{w.override_reason || '—'}</span></Td>
-                  <Td>
-                    <Button variant="ghost" size="sm"
-                      onClick={() => { setEditWeek(w); setOverrideDay(w.override_day_off ?? ''); setOverrideReason(w.override_reason||''); }}>
-                      Override
-                    </Button>
-                  </Td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </Table>
-      </Card>
-
-      <Modal open={!!editWeek} onClose={() => setEditWeek(null)}
-        title={`Override schedule — week of ${editWeek ? formatDate(editWeek.week_start) : ''}`}
-        size="sm">
-        <div style={{ display:'flex', flexDirection:'column', gap:'1rem' }}>
-          <div className="field">
-            <label className="field-label">Day off this week</label>
-            <select className="field-input" value={overrideDay}
-              onChange={e => setOverrideDay(e.target.value)}>
-              <option value="">Default — Tuesday</option>
-              <option value="1">Monday</option>
-              <option value="3">Wednesday</option>
-              <option value="4">Thursday</option>
-              <option value="5">Friday</option>
-            </select>
-          </div>
-          <Input label="Reason (optional)" value={overrideReason}
-            onChange={e => setOverrideReason(e.target.value)}
-            placeholder="e.g. Client meeting Tuesday, swapping to Friday" />
-          <div className="modal-footer">
-            <Button variant="secondary" onClick={() => setEditWeek(null)}>Cancel</Button>
-            <Button variant="primary" loading={updateMutation.isPending}
-              onClick={() => updateMutation.mutate({
-                week_start:       editWeek.week_start,
-                override_day_off: overrideDay !== '' ? parseInt(overrideDay) : null,
-                override_reason:  overrideReason || null,
-              })}>
               Save
             </Button>
           </div>

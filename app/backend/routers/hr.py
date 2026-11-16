@@ -31,11 +31,6 @@ class StatusUpdate(BaseModel):
     status:       str   # 'in_office' | 'remote' | 'off' | 'sick'
     status_note:  Optional[str] = None
 
-class ScheduleOverride(BaseModel):
-    week_start:      date
-    override_day_off: Optional[int] = None  # 0-6, None = revert to default
-    override_reason:  Optional[str] = None
-
 class EventCreate(BaseModel):
     title:        str
     description:  Optional[str] = None
@@ -640,64 +635,3 @@ async def delete_event(
     await db.execute(text("DELETE FROM calendar_events WHERE id = :id"), {"id": event_id})
     await db.commit()
     return {"message": "Event deleted."}
-
-
-# ---- Patricia's Schedule Overrides ----
-
-@router.get("/schedule/pw")
-async def get_pw_schedule(
-    db   = Depends(get_db),
-    user = Depends(get_current_user),
-):
-    """Get Patricia's schedule overrides for the next 12 weeks."""
-    if user.role != "ops_manager" and user.email != "pw@metabolictrack.com":
-        raise HTTPException(403, "Only Patricia or the ops manager can view this schedule.")
-
-    result = await db.execute(text("""
-        SELECT wo.*, u_set.full_name AS set_by_name
-        FROM work_schedule_overrides wo
-        JOIN users pw ON pw.id = wo.user_id
-        LEFT JOIN users u_set ON u_set.id = wo.set_by
-        WHERE pw.email = 'pw@metabolictrack.com'
-          AND wo.week_start >= date_trunc('week', CURRENT_DATE)::DATE
-        ORDER BY wo.week_start
-        LIMIT 12
-    """))
-    return [dict(r) for r in result.mappings()]
-
-
-@router.patch("/schedule/pw")
-async def update_pw_schedule(
-    body: ScheduleOverride,
-    db   = Depends(get_db),
-    user = Depends(get_current_user),
-):
-    """Patricia or ops manager can override her day off for a given week."""
-    pw_result = await db.execute(text(
-        "SELECT id FROM users WHERE email = 'pw@metabolictrack.com'"
-    ))
-    pw = pw_result.scalar_one_or_none()
-    if not pw:
-        raise HTTPException(404, "Patricia Walker not found.")
-
-    if user.id != pw and user.role != "ops_manager":
-        raise HTTPException(403, "Only Patricia or the ops manager can update this schedule.")
-
-    await db.execute(text("""
-        INSERT INTO work_schedule_overrides
-            (user_id, week_start, regular_day_off, override_day_off, override_reason, set_by)
-        VALUES (:uid, :week_start, 2, :override_day, :reason, :set_by)
-        ON CONFLICT (user_id, week_start) DO UPDATE
-            SET override_day_off = :override_day,
-                override_reason  = :reason,
-                set_by           = :set_by,
-                created_at       = NOW()
-    """), {
-        "uid":          pw,
-        "week_start":   body.week_start,
-        "override_day": body.override_day_off,
-        "reason":       body.override_reason,
-        "set_by":       user.id,
-    })
-    await db.commit()
-    return {"message": "Schedule updated."}
